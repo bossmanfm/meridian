@@ -9,7 +9,7 @@ import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
-import { startPolling, stopPolling, sendMessage, notifyOutOfRange, notifyCycleSummary, isEnabled as telegramEnabled } from "./telegram.js";
+import { startPolling, stopPolling, sendMessage, notifyOutOfRange, isEnabled as telegramEnabled } from "./telegram.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -64,12 +64,13 @@ function startCronJobs() {
     _autonomousBusy = true;
     timers.managementLastRun = Date.now();
     log("cron", "Starting management cycle");
+    let mgmtReport = null;
     try {
-      await agentLoop(`
+      const { content } = await agentLoop(`
 MANAGEMENT CYCLE
 
 1. get_my_positions — check all open positions.
-2. For each position: 
+2. For each position:
    - Call get_position_pnl to see current yield and PnL.
    - Use your FULL AUTONOMY to decide: STAY, CLOSE, or CLOSE & REDEPLOY.
    - BIAS: STAY is the default. Only close if there is a COMPELLING reason (yield died, pool collapsed, or extreme profit/loss).
@@ -77,18 +78,20 @@ MANAGEMENT CYCLE
 3. If you close any position: call get_wallet_balance and swap any remaining base tokens to SOL.
 4. Report your reasoning for every decision.
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
+      mgmtReport = content;
     } catch (error) {
       log("cron_error", `Management cycle failed: ${error.message}`);
+      mgmtReport = `Management cycle failed: ${error.message}`;
     } finally {
       _autonomousBusy = false;
       if (telegramEnabled()) {
-        const [pos, wal] = await Promise.all([getMyPositions().catch(() => null), getWalletBalances().catch(() => null)]);
+        if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
+        const pos = await getMyPositions().catch(() => null);
         for (const p of pos?.positions || []) {
           if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
             notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => {});
           }
         }
-        notifyCycleSummary({ cycleType: "management", positions: pos?.total_positions ?? "?", walletSol: wal?.sol ?? "?" }).catch(() => {});
       }
     }
   });
@@ -98,8 +101,9 @@ MANAGEMENT CYCLE
     _autonomousBusy = true;
     timers.screeningLastRun = Date.now();
     log("cron", "Starting screening cycle");
+    let screenReport = null;
     try {
-      await agentLoop(`
+      const { content } = await agentLoop(`
 SCREENING CYCLE — DEPLOY ONLY
 
 1. get_my_positions first. Only proceed if positions < ${config.risk.maxPositions}.
@@ -108,13 +112,14 @@ SCREENING CYCLE — DEPLOY ONLY
 4. If the pool is high-quality: get_active_bin and deploy_position.
 5. Report result and reasoning.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
+      screenReport = content;
     } catch (error) {
       log("cron_error", `Screening cycle failed: ${error.message}`);
+      screenReport = `Screening cycle failed: ${error.message}`;
     } finally {
       _autonomousBusy = false;
       if (telegramEnabled()) {
-        const [pos, wal] = await Promise.all([getMyPositions().catch(() => null), getWalletBalances().catch(() => null)]);
-        notifyCycleSummary({ cycleType: "screening", positions: pos?.total_positions ?? "?", walletSol: wal?.sol ?? "?" }).catch(() => {});
+        if (screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
       }
     }
   });
