@@ -160,19 +160,20 @@ export async function getTokenHolders({ mint, limit = 20 }) {
     const kwHolders = Array.isArray(kwData) ? kwData : (kwData?.holders || kwData?.data || []);
 
     const smartWalletMap = new Map(smartWallets.map((w) => [w.address, w]));
-    await Promise.all(kwHolders.map(async (h) => {
-      const addr = h.address || h.wallet;
-      const wallet = smartWalletMap.get(addr);
-      if (!wallet) return;
+    const matchedHolders = kwHolders
+      .map((h) => ({ ...h, addr: h.address || h.wallet }))
+      .filter((h) => smartWalletMap.has(h.addr));
+
+    await Promise.all(matchedHolders.map(async (h) => {
+      const wallet = smartWalletMap.get(h.addr);
       const pct = totalSupply ? parseFloat(((Number(h.amount) / totalSupply) * 100).toFixed(4)) : null;
 
-      // Fetch PnL summary for this wallet + token
       let pnl = null;
       try {
-        const pnlRes = await fetch(`${DATAPI_BASE}/pnl-positions?address=${addr}&assetId=${mint}`);
+        const pnlRes = await fetch(`${DATAPI_BASE}/pnl-positions?address=${h.addr}&assetId=${mint}`);
         if (pnlRes.ok) {
           const pnlData = await pnlRes.json();
-          const pos = pnlData?.[addr]?.tokenPositions?.[0];
+          const pos = pnlData?.[h.addr]?.tokenPositions?.[0];
           if (pos) pnl = {
             balance: pos.balance,
             balance_usd: pos.balanceValue,
@@ -196,7 +197,7 @@ export async function getTokenHolders({ mint, limit = 20 }) {
       smartWalletsHolding.push({
         name: wallet.name,
         category: wallet.category,
-        address: addr,
+        address: h.addr,
         pct,
         sol_balance: h.solBalanceDisplay ?? h.solBalance,
         pnl,
