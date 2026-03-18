@@ -681,6 +681,31 @@ Examples:
   {
     type: "function",
     function: {
+      name: "get_pool_info",
+      description: `Get deep pool intelligence from LP Agent API — token audit, fee trends, bot holders, buy/sell ratio.
+Use this for extra due diligence before deploying or to check if a pool is dying during management.
+Rate limited to 5 calls per minute — use sparingly, only when you need deeper intel than get_pool_detail provides.
+Results are auto-saved to memory so you won't need to call it again for the same pool.
+
+Returns: token audit (mint/freeze authority, bot %, dev balance, top holder concentration),
+5m and 1h trading stats (buy/sell volume, organic ratio, trader count),
+fee trend over last 24 hours, liquidity amounts.`,
+      parameters: {
+        type: "object",
+        properties: {
+          pool_address: {
+            type: "string",
+            description: "The DLMM pool address to get deep info for"
+          }
+        },
+        required: ["pool_address"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "remember_fact",
       description: `Store a fact in holographic memory for cross-session learning.
 Use this to remember patterns, outcomes, or strategies that should persist across restarts.
