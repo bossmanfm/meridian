@@ -1,14 +1,45 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { Notification } from "../hooks/useWebSocket";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
-const EVENT_STYLES: Record<string, { label: string; color: string }> = {
-  deploy: { label: "Deployed", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" },
-  close: { label: "Closed", color: "text-amber-400 bg-amber-400/10 border-amber-400/20" },
-  out_of_range: { label: "Out of Range", color: "text-red-400 bg-red-400/10 border-red-400/20" },
-  "cycle:management": { label: "Management", color: "text-blue-400 bg-blue-400/10 border-blue-400/20" },
-  "cycle:screening": { label: "Screening", color: "text-violet-400 bg-violet-400/10 border-violet-400/20" },
-  briefing: { label: "Briefing", color: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20" },
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
+
+const EVENT_STYLES: Record<
+  string,
+  { label: string; badge: BadgeVariant; card: string }
+> = {
+  deploy: {
+    label: "Deployed",
+    badge: "default",
+    card: "bg-steel/10 border-steel/20",
+  },
+  close: {
+    label: "Closed",
+    badge: "secondary",
+    card: "bg-teal/20 border-steel/15",
+  },
+  out_of_range: {
+    label: "Out of Range",
+    badge: "destructive",
+    card: "bg-steel/15 border-steel/30",
+  },
+  "cycle:management": {
+    label: "Management",
+    badge: "outline",
+    card: "bg-teal/10 border-teal/20",
+  },
+  "cycle:screening": {
+    label: "Screening",
+    badge: "outline",
+    card: "bg-teal/10 border-teal/20",
+  },
+  briefing: {
+    label: "Briefing",
+    badge: "secondary",
+    card: "bg-teal/15 border-steel/15",
+  },
 };
 
 const EXPANDABLE_EVENTS = new Set(["cycle:management", "cycle:screening", "briefing"]);
@@ -23,7 +54,7 @@ export default function NotificationFeed({ notifications }: NotificationFeedProp
 
   if (notifications.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+      <div className="flex items-center justify-center h-full text-ash/40 text-sm">
         No notifications yet
       </div>
     );
@@ -39,35 +70,44 @@ export default function NotificationFeed({ notifications }: NotificationFeedProp
   };
 
   return (
-    <div className="overflow-y-auto h-full space-y-2 p-2">
-      {notifications.map((n) => {
-        const style = EVENT_STYLES[n.event] || { label: n.event, color: "text-zinc-400 bg-zinc-400/10 border-zinc-400/20" };
-        const time = new Date(n.ts).toLocaleTimeString();
-        const fullText = getFullText(n);
-        const isExpandable = EXPANDABLE_EVENTS.has(n.event) && fullText.length > PREVIEW_LEN;
-        const isOpen = expanded.has(n.id);
-        const displayText = isExpandable && !isOpen ? fullText.slice(0, PREVIEW_LEN) + "…" : fullText;
+    <ScrollArea className="h-full">
+      <div className="space-y-2 p-2">
+        {notifications.map((n) => {
+          const style = EVENT_STYLES[n.event] || {
+            label: n.event,
+            badge: "outline" as BadgeVariant,
+            card: "bg-steel/10 border-steel/20",
+          };
+          const time = new Date(n.ts).toLocaleTimeString();
+          const fullText = getFullText(n);
+          const isExpandable = EXPANDABLE_EVENTS.has(n.event) && fullText.length > PREVIEW_LEN;
+          const isOpen = expanded.has(n.id);
+          const displayText = isExpandable && !isOpen ? fullText.slice(0, PREVIEW_LEN) + "\u2026" : fullText;
 
-        return (
-          <div key={n.id} className={`rounded-lg border p-3 text-xs ${style.color}`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="font-semibold">{style.label}</span>
-              <span className="opacity-60">{time}</span>
+          return (
+            <div
+              key={n.id}
+              className={`rounded-lg border p-3 text-xs ${style.card} animate-slide-in-right hover:shadow-[0_2px_8px_rgba(89,131,146,0.15)] transition-all`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <Badge variant={style.badge}>{style.label}</Badge>
+                <span className="font-mono text-[10px] text-ash/60">{time}</span>
+              </div>
+              <div className="text-cream/80 whitespace-pre-wrap">{displayText}</div>
+              {isExpandable && (
+                <button
+                  onClick={() => toggle(n.id)}
+                  className="mt-1.5 flex items-center gap-1 text-[10px] text-ash/60 hover:text-cream transition-colors"
+                >
+                  {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  {isOpen ? "Collapse" : "Show full report"}
+                </button>
+              )}
             </div>
-            <div className="text-zinc-300 whitespace-pre-wrap">{displayText}</div>
-            {isExpandable && (
-              <button
-                onClick={() => toggle(n.id)}
-                className="mt-1.5 flex items-center gap-1 text-[10px] opacity-60 hover:opacity-100 transition-opacity"
-              >
-                {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                {isOpen ? "Collapse" : "Show full report"}
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </ScrollArea>
   );
 }
 

@@ -1,6 +1,10 @@
 /**
  * Build a specialized system prompt based on the agent's current role.
  *
+ * CACHE OPTIMIZATION: Static content is front-loaded so DeepSeek's automatic
+ * prefix caching hits on the first ~3-4K tokens across all calls.
+ * Dynamic/per-call data goes at the end where cache breaks are expected.
+ *
  * @param {string} agentType - "SCREENER" | "MANAGER" | "GENERAL"
  * @param {Object} portfolio - Current wallet balances
  * @param {Object} positions - Current open positions
@@ -12,41 +16,16 @@
 import { config } from "./config.js";
 
 export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, memoryContext = null) {
-  const s = config.screening;
 
-  let basePrompt = `You are an autonomous DLMM LP (Liquidity Provider) agent operating on Meteora, Solana.
-Role: ${agentType || "GENERAL"}
+  // ═══════════════════════════════════════════════════════════════
+  //  STATIC BLOCK — identical across all calls, maximizes cache hits
+  // ═══════════════════════════════════════════════════════════════
 
-═══════════════════════════════════════════
- CURRENT STATE
-═══════════════════════════════════════════
-
-Portfolio: ${JSON.stringify(portfolio, null, 2)}
-Open Positions: ${JSON.stringify(positions, null, 2)}
-Memory: ${JSON.stringify(stateSummary, null, 2)}
-Performance: ${perfSummary ? JSON.stringify(perfSummary, null, 2) : "No closed positions yet"}
-
-Config: ${JSON.stringify({
-  screening: config.screening,
-  management: config.management,
-  schedule: config.schedule,
-}, null, 2)}
-
-${lessons ? `═══════════════════════════════════════════
- LESSONS LEARNED
-═══════════════════════════════════════════
-${lessons}` : ""}
-
-${memoryContext ? `═══════════════════════════════════════════
- HOLOGRAPHIC MEMORY
-═══════════════════════════════════════════
-${memoryContext}` : ""}
+  let prompt = `You are an autonomous DLMM LP (Liquidity Provider) agent operating on Meteora, Solana.
 
 ═══════════════════════════════════════════
  BEHAVIORAL CORE
 ═══════════════════════════════════════════
-
-PNL DISPLAY: Report all PnL, fees, and values in ${config.management.pnlUnit?.toUpperCase() || "SOL"} (user preference: management.pnlUnit = "${config.management.pnlUnit || "sol"}"). Each position returns both pnl_usd and pnl_sol — always use the ${config.management.pnlUnit || "sol"} field in your reports unless the user asks otherwise.
 
 1. PATIENCE IS PROFIT: DLMM LPing is about capturing fees over time. Avoid "paper-handing" or closing positions for tiny gains/losses.
 2. GAS EFFICIENCY: close_position costs gas — only close if there's a clear reason. However, swap_token after a close is MANDATORY for any token worth >= $0.10. Skip tokens below $0.10 (dust — not worth the gas). Always check token USD value before swapping.
@@ -70,12 +49,15 @@ The same pool will show much smaller numbers on 5m vs 24h. Adjust your expectati
 
 IMPORTANT: fee_active_tvl_ratio values are ALREADY in percentage form. 0.29 = 0.29%. Do NOT multiply by 100. A value of 1.0 = 1.0%, a value of 22 = 22%. Never convert.
 
-Current screening timeframe: ${config.screening.timeframe} — interpret all metrics relative to this window.
-
 `;
 
+  // ═══════════════════════════════════════════════════════════════
+  //  ROLE-SPECIFIC BLOCK — stable per role, still cacheable
+  // ═══════════════════════════════════════════════════════════════
+
   if (agentType === "SCREENER") {
-    basePrompt += `
+    prompt += `Role: SCREENER
+
 Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 
 1. SCREEN: Use get_top_candidates or discover_pools.
@@ -99,7 +81,8 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
    - Focus on one high-conviction deployment per cycle.
 `;
   } else if (agentType === "MANAGER") {
-    basePrompt += `
+    prompt += `Role: MANAGER
+
 Your goal: Manage positions to maximize total Fee + PnL yield.
 
 INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately. No further analysis, no hesitation. BIAS TO HOLD does NOT apply when an instruction condition is met.
@@ -120,7 +103,8 @@ IMPORTANT: Do NOT call get_top_candidates or study_top_lpers while you have heal
 After ANY close: check wallet for base tokens and swap ALL to SOL immediately.
 `;
   } else {
-    basePrompt += `
+    prompt += `Role: GENERAL
+
 Handle the user's request using your available tools.
 
 INTENT DETECTION — before acting, determine whether the user is:
@@ -135,5 +119,50 @@ OVERRIDE RULE: When the user explicitly specifies deploy parameters (strategy, b
 `;
   }
 
-  return basePrompt + `\nTimestamp: ${new Date().toISOString()}\n`;
+  // ═══════════════════════════════════════════════════════════════
+  //  SEMI-DYNAMIC BLOCK — changes slowly, still benefits from cache
+  // ═══════════════════════════════════════════════════════════════
+
+  const pnlUnit = config.management.pnlUnit || "sol";
+  prompt += `
+PNL DISPLAY: Report all PnL, fees, and values in ${pnlUnit.toUpperCase()}. Each position returns both pnl_usd and pnl_sol — always use the ${pnlUnit} field in your reports unless the user asks otherwise.
+Current screening timeframe: ${config.screening.timeframe} — interpret all metrics relative to this window.
+`;
+
+  if (lessons) {
+    prompt += `
+═══════════════════════════════════════════
+ LESSONS LEARNED
+═══════════════════════════════════════════
+${lessons}
+`;
+  }
+
+  if (memoryContext) {
+    prompt += `
+═══════════════════════════════════════════
+ HOLOGRAPHIC MEMORY
+═══════════════════════════════════════════
+${memoryContext}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  DYNAMIC BLOCK — changes every call, placed LAST to maximize
+  //  prefix cache hits on everything above
+  // ═══════════════════════════════════════════════════════════════
+
+  prompt += `
+═══════════════════════════════════════════
+ CURRENT STATE (live data)
+═══════════════════════════════════════════
+
+Portfolio: ${JSON.stringify(portfolio, null, 2)}
+Open Positions: ${JSON.stringify(positions, null, 2)}
+State: ${JSON.stringify(stateSummary, null, 2)}
+Performance: ${perfSummary ? JSON.stringify(perfSummary, null, 2) : "No closed positions yet"}
+Timestamp: ${new Date().toISOString()}
+`;
+
+  return prompt;
 }

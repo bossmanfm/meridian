@@ -211,19 +211,24 @@ REPORT FORMAT (Strictly follow this for each position — use ${config.managemen
       const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
       log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance?.sol ?? "?"} SOL)`);
 
-      // Load active strategy
+      // Load saved strategies for reference (LLM picks per token)
       const activeStrategy = getActiveStrategy();
-      const strategyBlock = activeStrategy ? `
-ACTIVE STRATEGY: ${activeStrategy.name} (by ${activeStrategy.author})
-Apply these criteria during token selection and deployment:
-- LP Type: ${activeStrategy.lp_strategy}
-- Token: ${JSON.stringify(activeStrategy.token_criteria)}
-- Entry: ${JSON.stringify(activeStrategy.entry)}
-- Range: ${JSON.stringify(activeStrategy.range)}
-- Exit: ${JSON.stringify(activeStrategy.exit)}
-- Best for: ${activeStrategy.best_for}
-Deviate from this strategy only if the token clearly doesn't match — explain why in your report.
-` : `No active strategy set — use default bid_ask with standard settings.`;
+      const strategyBlock = `
+STRATEGY SELECTION — choose per token based on its profile:
+
+  Token Profile                         │ Strategy  │ Bins        │ Reasoning
+  ──────────────────────────────────────┼───────────┼─────────────┼──────────────────────────
+  New memecoin, < 24h, high volatility  │ bid_ask   │ 35–45       │ Single-sided = no bag risk
+  Pumping token, price up > 50% recent  │ bid_ask   │ 55–69 wide  │ Catch sell pressure safely
+  Proven token, organic > 80, ranging   │ spot      │ 55–69       │ Two-sided = max fee capture
+  High volume, stable, range-bound      │ spot      │ 45–60       │ Both sides earn, low IL risk
+  Unknown/uncertain                     │ bid_ask   │ 45–55       │ Safe default
+
+Rules:
+- Default to bid_ask single-sided when unsure — it's always the safer choice.
+- Only use spot (two-sided) if organic score > 80, holders > 1000, and price is stable/ranging.
+- Report which strategy you chose and WHY in your reasoning.
+${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrategy.name} — ${activeStrategy.lp_strategy}, best for: ${activeStrategy.best_for}` : ""}`;
 
       // Targeted recall: recall strategy memories for common bin steps
       let memoryHints = "";
@@ -263,10 +268,11 @@ ${strategyBlock}
      * DEPLOY if: global_fees_sol >= ${config.screening.minTokenFeesSol}, distribution is healthy AND narrative has a specific origin
      * Bundlers 5–15% are normal and not a reason to skip on their own — weigh against overall token health
      * Report global_fees_sol, holder check, and narrative outcome in your reasoning.
-6. If the pool passes all checks: get_active_bin and deploy_position with ${deployAmount} SOL.
-   COMPOUNDING: This amount is scaled from your current wallet (${currentBalance?.sol ?? "?"} SOL).
-   As profits accumulate and wallet grows, deploy amount increases automatically. Do NOT override with a smaller amount.
-7. Report result and reasoning including smart wallet signal, holder check outcome, deploy amount used, and interval set.
+6. If the pool passes all checks: get_active_bin, then deploy_position with ${deployAmount} SOL.
+   - Choose strategy (bid_ask or spot) and bin range based on the token profile table above.
+   - COMPOUNDING: This amount is scaled from your current wallet (${currentBalance?.sol ?? "?"} SOL).
+     As profits accumulate and wallet grows, deploy amount increases automatically. Do NOT override with a smaller amount.
+7. Report result and reasoning including: strategy chosen + why, smart wallet signal, holder check outcome, deploy amount used, and interval set.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
       screenReport = content;
     } catch (error) {
@@ -275,23 +281,6 @@ ${strategyBlock}
     } finally {
       setScreeningBusy(false);
       if (screenReport) emit("cycle:screening", { report: screenReport });
-    }
-  });
-
-  const healthTask = cron.schedule(`0 * * * *`, async () => {
-    if (isManagementBusy()) return;
-    setManagementBusy(true);
-    log("cron", "Starting health check");
-    try {
-      await agentLoop(`
-HEALTH CHECK
-
-Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxSteps, [], "MANAGER");
-    } catch (error) {
-      log("cron_error", `Health check failed: ${error.message}`);
-    } finally {
-      setManagementBusy(false);
     }
   });
 
@@ -305,7 +294,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  _cronTasks = [mgmtTask, screenTask, briefingTask, briefingWatchdog];
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
 }
 
@@ -332,7 +321,8 @@ function formatCandidates(candidates) {
   const lines = candidates.map((p, i) => {
     const name   = (p.name || "unknown").padEnd(20);
     const ftvl   = `${p.fee_active_tvl_ratio ?? p.fee_tvl_ratio}%`.padStart(8);
-    const vol    = `$${((p.volume_24h || 0) / 1000).toFixed(1)}k`.padStart(8);
+    const rawVol = p.volume_window || p.volume_24h || 0;
+    const vol    = (rawVol >= 1000 ? `$${(rawVol / 1000).toFixed(1)}k` : `$${Math.round(rawVol)}`).padStart(8);
     const active = `${p.active_pct}%`.padStart(6);
     const org    = String(p.organic_score).padStart(4);
     return `  [${i + 1}]  ${name}  fee/aTVL:${ftvl}  vol:${vol}  in-range:${active}  organic:${org}`;
@@ -362,7 +352,7 @@ if (isTTY) {
   });
 
   // Update prompt countdown every 10 seconds
-  setInterval(() => {
+  const promptInterval = setInterval(() => {
     if (!isBusy()) {
       rl.setPrompt(buildPrompt());
       rl.prompt(true); // true = preserve current line
@@ -403,12 +393,15 @@ if (isTTY) {
   let startupCandidates = [];
 
   try {
-    const [wallet, positions, { candidates, total_eligible, total_screened }] = await Promise.all([
+    const [wallet, positions, screenResult] = await Promise.all([
       getWalletBalances(),
       getMyPositions(),
       getTopCandidates({ limit: 5 }),
     ]);
 
+    const candidates = screenResult.candidates || [];
+    const total_eligible = screenResult.total_eligible ?? candidates.length;
+    const total_screened = screenResult.total_screened ?? 0;
     startupCandidates = candidates;
 
     console.log(`Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
@@ -568,9 +561,10 @@ Commands:
 
     if (input === "/candidates") {
       await runBusy(async () => {
-        const { candidates, total_eligible, total_screened } = await getTopCandidates({ limit: 5 });
+        const result = await getTopCandidates({ limit: 5 });
+        const candidates = result.candidates || [];
         startupCandidates = candidates;
-        console.log(`\nTop pools (${total_eligible} eligible from ${total_screened} screened):\n`);
+        console.log(`\nTop pools (${result.total_eligible ?? candidates.length} eligible from ${result.total_screened ?? 0} screened):\n`);
         console.log(formatCandidates(candidates));
         console.log();
       });
@@ -681,7 +675,10 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
     });
   });
 
-  rl.on("close", () => shutdown("stdin closed"));
+  rl.on("close", () => {
+    clearInterval(promptInterval);
+    shutdown("stdin closed");
+  });
 
 } else {
   // Non-TTY: start immediately
