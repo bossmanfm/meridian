@@ -163,11 +163,9 @@ WHEN TO USE WHICH:
 HARD RULES:
 - Bin Step: Screening filters apply (config minBinStep/maxBinStep). If user specifies a pool, deploy regardless of bin step.
 
-RANGE SELECTION: Pass price_range_pct to deploy_position (e.g. price_range_pct=35 for 35% range). Bins are calculated automatically from the pool's bin_step. No need to call calculate_bins separately.
-- Default: 35% if unsure
-- Volatile tokens (volatility >= 5): 40-50%
-- Stable/ranging tokens: 25-35%
-- Minimum effective range: ~20% (deploy rejects less than 20 bins)
+RANGE SELECTION: Pass price_range_pct to deploy_position. Bins are auto-calculated from the pool's bin_step. No need to call calculate_bins.
+Choose your range based on study_top_lpers results — match what profitable LPers are doing in that pool.
+If no study data available, default to 35%. Ranges from 20% to 90% are all valid. Wide ranges (>69 bins) are handled via multi-tx automatically.
 
 CHOOSING YOUR RANGE:
 1. Call study_top_lpers — see what range and hold time works for successful LPers in that pool
