@@ -432,16 +432,19 @@ Always provide a reason. This is logged as a lesson and visible in future cycles
       parameters: {
         type: "object",
         properties: {
-          changes: {
-            type: "object",
-            description: "Key-value pairs of settings to update. e.g. { \"takeProfitFeePct\": 8 }"
+          setting: {
+            type: "string",
+            description: "The config key to change. e.g. managementIntervalMin, stopLossPct, takeProfitFeePct, deployAmountSol, maxPositions, timeframe, etc."
+          },
+          value: {
+            description: "The new value for the setting (number, string, or boolean)"
           },
           reason: {
             type: "string",
-            description: "Why you are making this change — what you observed that justified it"
+            description: "Why you are making this change"
           }
         },
-        required: ["changes", "reason"]
+        required: ["setting", "value", "reason"]
       }
     }
   },

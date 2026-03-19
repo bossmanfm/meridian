@@ -144,12 +144,21 @@ const toolMap = {
     return { error: "invalid mode" };
   },
   update_config: (args) => {
-    // Handle both { changes: {...}, reason } and flat { key: val, reason }
-    let { changes, reason } = args;
-    if (!changes || typeof changes !== "object") {
+    // Support 3 formats:
+    // 1. { setting: "key", value: val, reason } — single setting (preferred)
+    // 2. { changes: { key: val, ... }, reason } — nested batch
+    // 3. { key: val, reason } — flat batch
+    let changes, reason;
+    if (args.setting && args.value !== undefined) {
+      changes = { [args.setting]: args.value };
+      reason = args.reason;
+    } else if (args.changes && typeof args.changes === "object") {
+      changes = args.changes;
+      reason = args.reason;
+    } else {
       const { reason: r, ...rest } = args;
       changes = rest;
-      reason = reason || r;
+      reason = r;
     }
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
