@@ -81,11 +81,25 @@ export async function recordPerformance(perf) {
 
   data.performance.push(entry);
 
-  // Derive and store a lesson
+  // Derive and store a lesson (with deduplication)
   const lesson = derivLesson(entry);
   if (lesson) {
-    data.lessons.push(lesson);
-    log("lessons", `New lesson: ${lesson.rule}`);
+    const dupeIdx = findDuplicate(data.lessons, lesson);
+    if (dupeIdx >= 0) {
+      // Update existing lesson with fresh data instead of creating duplicate
+      const existing = data.lessons[dupeIdx];
+      existing.rule = lesson.rule;
+      existing.pnl_pct = lesson.pnl_pct;
+      existing.range_efficiency = lesson.range_efficiency;
+      existing.pool = lesson.pool;
+      existing.context = lesson.context;
+      existing.created_at = lesson.created_at; // refresh timestamp
+      existing.update_count = (existing.update_count || 1) + 1;
+      log("lessons", `Updated existing lesson (${existing.update_count}x): ${lesson.rule}`);
+    } else {
+      data.lessons.push(lesson);
+      log("lessons", `New lesson: ${lesson.rule}`);
+    }
   }
 
   save(data);
@@ -360,6 +374,63 @@ export function evolveThresholds(perfData, config) {
   return { changes, rationale };
 }
 
+// ─── Deduplication Helpers ──────────────────────────────────────
+
+/**
+ * Normalize a lesson rule into a dedup key.
+ * Strips numbers, pool names, and normalizes whitespace to catch
+ * "same lesson, different numbers" duplicates.
+ */
+function lessonDedupKey(rule) {
+  return rule
+    .toLowerCase()
+    .replace(/[\d.]+%/g, 'N%')           // "5.2%" → "N%"
+    .replace(/\$[\d,.]+k?/g, '$N')        // "$17.5k" → "$N"
+    .replace(/[\d.]+ sol/g, 'N SOL')      // "0.5 SOL" → "N SOL"
+    .replace(/[\d.]+ minutes?/g, 'N min')  // "15 minutes" → "N min"
+    .replace(/[\d.]+ hours?/g, 'N hours')  // "2 hours" → "N hours"
+    .replace(/[\d.]+ bins?/g, 'N bins')    // "50 bins" → "N bins"
+    .replace(/\b\d+\b/g, 'N')             // standalone numbers → "N"
+    .replace(/[A-Z][a-z]+-SOL/gi, 'X-SOL') // "Downald-SOL" → "X-SOL"
+    .replace(/\s+/g, ' ')                  // collapse whitespace
+    .trim();
+}
+
+/**
+ * Check if two tag arrays are equivalent (same elements, any order).
+ */
+function tagsMatch(a, b) {
+  if (!a?.length && !b?.length) return true;
+  if (!a?.length || !b?.length) return false;
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  return b.every(t => setA.has(t));
+}
+
+/**
+ * Find an existing lesson that duplicates the candidate.
+ * Returns the index if found, -1 otherwise.
+ */
+function findDuplicate(lessons, candidate) {
+  const candidateKey = lessonDedupKey(candidate.rule);
+
+  for (let i = lessons.length - 1; i >= 0; i--) {
+    const existing = lessons[i];
+
+    // Method 1: Tag + outcome match
+    if (existing.outcome === candidate.outcome && tagsMatch(existing.tags, candidate.tags)) {
+      return i;
+    }
+
+    // Method 2: Normalized key match
+    if (lessonDedupKey(existing.rule) === candidateKey) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────
 
 function isFiniteNum(n) {
@@ -390,6 +461,42 @@ function nudge(current, target, maxChange) {
   return current + Math.sign(delta) * maxDelta;
 }
 
+// ─── One-Time Deduplication ────────────────────────────────────
+
+/**
+ * One-time cleanup: deduplicate existing lessons.
+ * Keeps the most recent version of each duplicate group.
+ * Returns count of removed duplicates.
+ */
+export function deduplicateLessons() {
+  const data = load();
+  if (data.lessons.length === 0) return 0;
+
+  const seen = new Map(); // dedupKey → index of kept lesson
+  const toRemove = new Set();
+
+  // Process newest first so we keep the most recent version
+  for (let i = data.lessons.length - 1; i >= 0; i--) {
+    const lesson = data.lessons[i];
+    const key = lessonDedupKey(lesson.rule);
+    const tagKey = `${lesson.outcome}:${(lesson.tags || []).sort().join(',')}`;
+
+    if (seen.has(key) || seen.has(tagKey)) {
+      toRemove.add(i);
+    } else {
+      seen.set(key, i);
+      seen.set(tagKey, i);
+    }
+  }
+
+  if (toRemove.size === 0) return 0;
+
+  data.lessons = data.lessons.filter((_, i) => !toRemove.has(i));
+  save(data);
+  log("lessons", `Deduplicated: removed ${toRemove.size} duplicate lessons (${data.lessons.length} remaining)`);
+  return toRemove.size;
+}
+
 // ─── Manual Lessons ────────────────────────────────────────────
 
 /**
@@ -397,7 +504,7 @@ function nudge(current, target, maxChange) {
  */
 export function addLesson(rule, tags = [], { pinned = false, role = null } = {}) {
   const data = load();
-  data.lessons.push({
+  const candidate = {
     id: Date.now(),
     rule,
     tags,
@@ -405,9 +512,25 @@ export function addLesson(rule, tags = [], { pinned = false, role = null } = {})
     pinned: !!pinned,
     role: role || null,
     created_at: new Date().toISOString(),
-  });
-  save(data);
-  log("lessons", `Manual lesson added${pinned ? " [PINNED]" : ""}${role ? ` [${role}]` : ""}: ${rule}`);
+  };
+
+  const dupeIdx = findDuplicate(data.lessons, candidate);
+  if (dupeIdx >= 0) {
+    // Update existing lesson instead of creating duplicate
+    const existing = data.lessons[dupeIdx];
+    existing.rule = candidate.rule;
+    existing.tags = candidate.tags;
+    existing.created_at = candidate.created_at; // refresh timestamp
+    if (candidate.pinned) existing.pinned = true; // upgrade to pinned if requested
+    if (candidate.role) existing.role = candidate.role;
+    existing.update_count = (existing.update_count || 1) + 1;
+    save(data);
+    log("lessons", `Updated existing lesson (${existing.update_count}x)${pinned ? " [PINNED]" : ""}${role ? ` [${role}]` : ""}: ${rule}`);
+  } else {
+    data.lessons.push(candidate);
+    save(data);
+    log("lessons", `Manual lesson added${pinned ? " [PINNED]" : ""}${role ? ` [${role}]` : ""}: ${rule}`);
+  }
 }
 
 /**

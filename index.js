@@ -7,7 +7,7 @@ import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
-import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
+import { evolveThresholds, getPerformanceSummary, deduplicateLessons } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, isEnabled as telegramEnabled } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
@@ -30,6 +30,9 @@ log("startup", `Model: ${process.env.LLM_MODEL || "deepseek-chat"}`);
 
 // Initialize holographic memory at startup
 initMemory();
+
+// One-time lesson dedup on startup
+deduplicateLessons();
 
 const TP_PCT  = config.management.takeProfitFeePct;
 const DEPLOY  = config.management.deployAmountSol;

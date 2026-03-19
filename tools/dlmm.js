@@ -400,7 +400,7 @@ export async function getMyPositions({ force = false } = {}) {
     try { solPrice = (await getWalletBalances()).sol_price || 0; } catch { /* best-effort */ }
     const toSol = (usd) => solPrice > 0 ? Math.round((usd / solPrice) * 10000) / 10000 : null;
 
-    const positions = raw.map((r) => {
+    const positions = await Promise.all(raw.map(async (r) => {
       const p = pnlByPool[r.pool]?.[r.position] || null;
 
       const inRange = p ? !p.isOutOfRange : true;
@@ -418,11 +418,59 @@ export async function getMyPositions({ force = false } = {}) {
       const pnlPct        = (config.management.pnlUnit === "sol" ? p?.pnlSolPctChange : p?.pnlPctChange) ?? 0;
 
       const tracked = getTrackedPosition(r.position);
+
+      // Auto-adopt untracked positions (manually opened or from external tools)
+      if (!tracked && p) {
+        try {
+          const { getPoolDetail } = await import("./screening.js");
+          const poolDetail = await getPoolDetail({ pool_address: r.pool, timeframe: "1h" }).catch(() => null);
+
+          // Infer strategy from bin range: all bins below active = bid_ask, spans both = spot
+          const inferredStrategy = (p.upperBinId <= p.poolActiveBinId) ? "bid_ask"
+            : (p.lowerBinId >= p.poolActiveBinId) ? "bid_ask"  // token-only or edge case
+            : "spot";
+
+          const depositSol = parseFloat(p.allTimeDeposits?.tokenY?.amountSol || 0);
+          const depositUsd = parseFloat(p.allTimeDeposits?.total?.usd || 0);
+
+          trackPosition({
+            position: r.position,
+            pool: r.pool,
+            pool_name: poolDetail?.name || r.pair || r.pool.slice(0, 8),
+            strategy: inferredStrategy,
+            bin_range: {
+              min: p.lowerBinId,
+              max: p.upperBinId,
+              bins_below: p.poolActiveBinId - p.lowerBinId,
+              bins_above: p.upperBinId - p.poolActiveBinId,
+            },
+            amount_sol: depositSol,
+            amount_x: parseFloat(p.allTimeDeposits?.tokenX?.amount || 0),
+            active_bin_at_deploy: p.poolActiveBinId,
+            bin_step: poolDetail?.bin_step || null,
+            volatility: poolDetail?.volatility || null,
+            fee_tvl_ratio: poolDetail?.fee_active_tvl_ratio || null,
+            initial_fee_tvl_24h: poolDetail?.fee_active_tvl_ratio || null,
+            organic_score: poolDetail?.organic_score || null,
+            initial_value_usd: depositUsd,
+            deployed_at: p.createdAt ? new Date(p.createdAt * 1000).toISOString() : new Date().toISOString(),
+            adopted: true,
+          });
+
+          log("adopt", `Auto-adopted position ${r.position.slice(0, 8)} in ${poolDetail?.name || r.pool.slice(0, 8)} (${inferredStrategy}, ${depositSol.toFixed(2)} SOL)`);
+        } catch (e) {
+          log("adopt_warn", `Failed to auto-adopt ${r.position.slice(0, 8)}: ${e.message}`);
+        }
+      }
+
+      // Re-read tracked state (may have just been created by auto-adoption)
+      const trackedFinal = tracked || getTrackedPosition(r.position);
+
       const ageFromPnlApi = p?.createdAt
         ? Math.floor((Date.now() - p.createdAt * 1000) / 60000)
         : null;
-      const ageFromState = tracked?.deployed_at
-        ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000)
+      const ageFromState = trackedFinal?.deployed_at
+        ? Math.floor((Date.now() - new Date(trackedFinal.deployed_at).getTime()) / 60000)
         : null;
       const ageMinutes = Math.max(ageFromPnlApi ?? 0, ageFromState ?? 0) || null;
 
@@ -436,9 +484,9 @@ export async function getMyPositions({ force = false } = {}) {
         pool: r.pool,
         pair: r.pair,
         base_mint: r.base_mint,
-        strategy: tracked?.strategy || "bid_ask",
-        bin_step: tracked?.bin_step || null,
-        volatility: tracked?.volatility || null,
+        strategy: trackedFinal?.strategy || "bid_ask",
+        bin_step: trackedFinal?.bin_step || null,
+        volatility: trackedFinal?.volatility || null,
         lower_bin: lowerBin,
         upper_bin: upperBin,
         active_bin: activeBin,
@@ -457,7 +505,7 @@ export async function getMyPositions({ force = false } = {}) {
         age_minutes: ageMinutes,
         minutes_out_of_range: minutesOutOfRange(r.position),
       };
-    });
+    }));
 
     const result = { wallet: walletAddress, total_positions: positions.length, positions };
     syncOpenPositions(positions.map((p) => p.position));

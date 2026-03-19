@@ -50,11 +50,15 @@ export function trackPosition({
   amount_sol,
   amount_x = 0,
   active_bin,
+  active_bin_at_deploy,
   bin_step,
   volatility,
   fee_tvl_ratio,
+  initial_fee_tvl_24h,
   organic_score,
   initial_value_usd,
+  deployed_at,
+  adopted = false,
 }) {
   const state = load();
   state.positions[position] = {
@@ -65,14 +69,15 @@ export function trackPosition({
     bin_range,
     amount_sol,
     amount_x,
-    active_bin_at_deploy: active_bin,
+    active_bin_at_deploy: active_bin_at_deploy || active_bin,
     bin_step,
     volatility,
     fee_tvl_ratio,
-    initial_fee_tvl_24h: fee_tvl_ratio,
+    initial_fee_tvl_24h: initial_fee_tvl_24h || fee_tvl_ratio,
     organic_score,
     initial_value_usd,
-    deployed_at: new Date().toISOString(),
+    deployed_at: deployed_at || new Date().toISOString(),
+    adopted,
     out_of_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
@@ -81,11 +86,12 @@ export function trackPosition({
     trailing_active: false,
     closed: false,
     closed_at: null,
-    notes: [],
+    notes: adopted ? ["Auto-adopted: position was opened externally"] : [],
   };
-  pushEvent(state, { action: "deploy", position, pool_name: pool_name || pool });
+  const action = adopted ? "adopt" : "deploy";
+  pushEvent(state, { action, position, pool_name: pool_name || pool });
   save(state);
-  log("state", `Tracked new position: ${position} in pool ${pool}`);
+  log("state", `Tracked ${adopted ? "adopted" : "new"} position: ${position} in pool ${pool}`);
 }
 
 /**
