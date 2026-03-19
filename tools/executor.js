@@ -150,7 +150,9 @@ const toolMap = {
     // 3. { key: val, reason } — flat batch
     let changes, reason;
     if (args.setting && args.value !== undefined) {
-      changes = { [args.setting]: args.value };
+      // Strip section prefix if model passes "management.managementIntervalMin" instead of "managementIntervalMin"
+      const key = args.setting.includes(".") ? args.setting.split(".").pop() : args.setting;
+      changes = { [key]: args.value };
       reason = args.reason;
     } else if (args.changes && typeof args.changes === "object") {
       changes = args.changes;
