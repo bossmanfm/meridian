@@ -11,8 +11,14 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 let _cache = null;
 let _cacheAt = 0;
 
+const _keys = (process.env.LPAGENT_API_KEY || "").split(",").map(k => k.trim()).filter(Boolean);
+let _keyIdx = 0;
+
 function getApiKey() {
-  return (process.env.LPAGENT_API_KEY || "").split(",")[0].trim() || null;
+  if (_keys.length === 0) return null;
+  const key = _keys[_keyIdx % _keys.length];
+  _keyIdx++;
+  return key;
 }
 
 async function getWalletAddress() {
