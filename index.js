@@ -1,7 +1,7 @@
 import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
-import { agentLoop } from "./agent.js";
+import { agentLoop, lightChat } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
@@ -13,7 +13,7 @@ import { startPolling, stopPolling, sendMessage, isEnabled as telegramEnabled } 
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
-import { initMemory, recallForScreening, recallForManagement, rememberPositionSnapshot, maybePromote } from "./memory.js";
+import { initMemory, recallForScreening, recallForManagement, rememberPositionSnapshot, maybePromote, checkCapacity } from "./memory.js";
 import { updatePnlAndCheckExits } from "./state.js";
 import { emit } from "./notifier.js";
 import {
@@ -183,6 +183,7 @@ REPORT FORMAT (Strictly follow this for each position — use ${config.managemen
       } catch { /* best-effort */ }
       // Promote high-hit nugget facts to MEMORY.md
       maybePromote();
+      checkCapacity();
     }
   });
 
@@ -482,7 +483,7 @@ if (isTTY) {
     setBusy(true);
     try {
       log("telegram", `Incoming: ${text}`);
-      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel);
+      const { content } = await lightChat(text, sessionHistory, config.llm.generalModel);
       appendHistory(text, content);
       await sendMessage(content);
     } catch (e) {
@@ -693,7 +694,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
     // ── Free-form chat ───────────────────────
     await runBusy(async () => {
       log("user", input);
-      const { content } = await agentLoop(input, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel);
+      const { content } = await lightChat(input, sessionHistory, config.llm.generalModel);
       appendHistory(input, content);
       console.log(`\n${content}\n`);
     });

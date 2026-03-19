@@ -1,4 +1,4 @@
-import type { PositionData, WalletData, CandidateData, Notification, StatusInfo } from "../hooks/useWebSocket";
+import type { PositionData, WalletData, CandidateData, Notification, StatusInfo, LpOverviewData } from "../hooks/useWebSocket";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import DashboardTab from "./DashboardTab";
 import CandidatesTab from "./CandidatesTab";
@@ -10,9 +10,10 @@ interface DataSidebarProps {
   candidates: CandidateData | null;
   notifications: Notification[];
   status: StatusInfo;
+  lpOverview: LpOverviewData | null;
 }
 
-export default function DataSidebar({ positions, wallet, candidates, notifications }: DataSidebarProps) {
+export default function DataSidebar({ positions, wallet, candidates, notifications, lpOverview }: DataSidebarProps) {
   return (
     <Tabs defaultValue="dashboard" className="flex flex-col h-full">
       <TabsList>
@@ -22,7 +23,7 @@ export default function DataSidebar({ positions, wallet, candidates, notificatio
       </TabsList>
 
       <TabsContent value="dashboard" className="flex-1">
-        <DashboardTab positions={positions} wallet={wallet} />
+        <DashboardTab positions={positions} wallet={wallet} lpOverview={lpOverview} />
       </TabsContent>
 
       <TabsContent value="candidates" className="flex-1">

@@ -9,6 +9,7 @@ import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
 import { getMemoryContext } from "./memory.js";
+import { getLpOverviewSummary } from "./tools/lp-overview.js";
 
 // DeepSeek uses the OpenAI-compatible API
 const client = new OpenAI({
@@ -32,7 +33,13 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
   const memoryContext = getMemoryContext();
-  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, memoryContext);
+  let systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, memoryContext);
+
+  // Append verified on-chain LP performance from LP Agent API
+  const lpSummary = await getLpOverviewSummary().catch(() => null);
+  if (lpSummary) {
+    systemPrompt += `\n\nLP AGENT PERFORMANCE (real data from LP Agent API — use this for accurate PnL):\n${lpSummary}\n`;
+  }
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -134,6 +141,66 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
 
   log("agent", "Max steps reached without final answer");
   return { content: "Max steps reached. Review logs for partial progress.", userMessage: goal };
+}
+
+/**
+ * Lightweight chat — uses nuggets-cached context instead of fetching from chain.
+ * First attempts a single LLM call with no tools. If the LLM says it needs tools
+ * (by including "[NEED_TOOLS]" in its response), escalates to full agentLoop.
+ *
+ * Typical response time: ~1-3s vs ~15-30s for full agentLoop.
+ */
+export async function lightChat(goal, sessionHistory = [], model = null) {
+  const stateSummary = getStateSummary();
+  const memoryContext = getMemoryContext();
+  const perfSummary = getPerformanceSummary();
+
+  // Build a lightweight context from cached/local data only — no RPC calls
+  const contextParts = [
+    `You are a DLMM liquidity agent assistant. Answer the user's question using the context below.`,
+    `If you need LIVE on-chain data (current prices, exact PnL, execute transactions) that isn't in the context, respond with exactly "[NEED_TOOLS]" and nothing else.`,
+    `For general questions, explanations, strategy discussion, or anything answerable from context — just answer directly.`,
+  ];
+
+  if (stateSummary) contextParts.push(`\nCURRENT STATE:\n${stateSummary}`);
+  if (memoryContext) contextParts.push(`\nMEMORY (from nuggets):\n${memoryContext}`);
+  if (perfSummary) {
+    contextParts.push(`\nPERFORMANCE: ${perfSummary.total_positions_closed} closed, win rate ${perfSummary.win_rate_pct}%, avg PnL ${perfSummary.avg_pnl_pct}%`);
+  }
+
+  // Append verified on-chain LP performance from LP Agent API
+  const lpSummary = await getLpOverviewSummary().catch(() => null);
+  if (lpSummary) {
+    contextParts.push(`\nLP AGENT PERFORMANCE (verified on-chain data):\n${lpSummary}`);
+  }
+
+  const messages = [
+    { role: "system", content: contextParts.join("\n") },
+    ...sessionHistory,
+    { role: "user", content: goal },
+  ];
+
+  try {
+    const activeModel = model || DEFAULT_MODEL;
+    const response = await client.chat.completions.create({
+      model: activeModel,
+      messages,
+      temperature: config.llm.temperature,
+      max_tokens: config.llm.maxTokens,
+    });
+
+    const content = response.choices?.[0]?.message?.content;
+    if (!content || content.trim().includes("[NEED_TOOLS]")) {
+      log("agent", "Light chat escalating to full agent loop");
+      return agentLoop(goal, config.llm.maxSteps, sessionHistory, "GENERAL", model);
+    }
+
+    log("agent", "Light chat answered directly");
+    return { content, userMessage: goal };
+  } catch (e) {
+    log("agent", `Light chat failed (${e.message}), falling back to full agent loop`);
+    return agentLoop(goal, config.llm.maxSteps, sessionHistory, "GENERAL", model);
+  }
 }
 
 function sleep(ms) {

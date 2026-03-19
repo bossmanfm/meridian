@@ -4,6 +4,22 @@ import type { ChatMessage, StatusInfo } from "../hooks/useWebSocket";
 import { SUGGESTIONS } from "@/lib/commands";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+function stripHtml(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?b>/gi, "")
+    .replace(/<\/?i>/gi, "")
+    .replace(/<\/?em>/gi, "")
+    .replace(/<\/?strong>/gi, "")
+    .replace(/<\/?code>/gi, "`")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 interface ChatPanelProps {
   messages: ChatMessage[];
   status: StatusInfo;
@@ -83,7 +99,7 @@ export default function ChatPanel({ messages, status, onSend, onOpenCommandPalet
                     : "bg-teal/40 border border-steel/20 border-l-2 border-l-steel text-cream/90"
                 }`}
               >
-                {msg.content}
+                {msg.role === "assistant" ? stripHtml(msg.content) : msg.content}
               </div>
             </div>
           ))}

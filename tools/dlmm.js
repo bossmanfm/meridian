@@ -437,6 +437,8 @@ export async function getMyPositions({ force = false } = {}) {
         pair: r.pair,
         base_mint: r.base_mint,
         strategy: tracked?.strategy || "bid_ask",
+        bin_step: tracked?.bin_step || null,
+        volatility: tracked?.volatility || null,
         lower_bin: lowerBin,
         upper_bin: upperBin,
         active_bin: activeBin,
@@ -701,6 +703,12 @@ export async function closePosition({ position_address }) {
         minutes_held: minutesHeld,
         close_reason: "agent decision",
       });
+
+      // Clean up transient nugget entries
+      try {
+        const { forgetPositionSnapshot } = await import("../memory.js");
+        forgetPositionSnapshot(tracked);
+      } catch { /* best-effort */ }
 
       return { success: true, position: position_address, pool: poolAddress, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct };
     }

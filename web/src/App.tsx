@@ -8,7 +8,7 @@ import CommandPalette from "./components/CommandPalette";
 import ToastProvider from "./components/ToastProvider";
 
 export default function App() {
-  const { connected, messages, notifications, status, timers, positions, wallet, candidates, sendMessage } = useWebSocket();
+  const { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, sendMessage } = useWebSocket();
   const [cmdOpen, setCmdOpen] = useState(false);
 
   useToastNotifications(notifications);
@@ -51,6 +51,7 @@ export default function App() {
             candidates={candidates}
             notifications={notifications}
             status={status}
+            lpOverview={lpOverview}
           />
         </div>
       </div>

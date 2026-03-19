@@ -25,10 +25,10 @@ export function initMemory() {
   shelf.loadAll();
 
   // Ensure core nuggets exist
-  shelf.getOrCreate("pools");       // pool outcomes and patterns
-  shelf.getOrCreate("strategies");  // strategy effectiveness
-  shelf.getOrCreate("lessons");     // general learned lessons
-  shelf.getOrCreate("patterns");    // market patterns
+  shelf.getOrCreate("pools", { maxFacts: 150 });       // pool outcomes and patterns
+  shelf.getOrCreate("strategies", { maxFacts: 80 });    // strategy effectiveness
+  shelf.getOrCreate("lessons", { maxFacts: 100 });      // general learned lessons
+  shelf.getOrCreate("patterns", { maxFacts: 80 });      // market patterns
 
   log("memory", `Nuggets memory initialized (${shelf.size} nuggets loaded from ${SAVE_DIR})`);
   return shelf;
@@ -81,12 +81,12 @@ export function recallForScreening(poolData) {
   if (rawName) {
     const name = sanitizeKey(rawName);
     const r = s.recall(name, "pools", SESSION_ID);
-    if (r.found) results.push({ source: "pools", ...r });
+    if (r.found && r.confidence >= 0.4) results.push({ source: "pools", ...r });
   }
 
   if (poolData?.base_token) {
     const r = s.recall(sanitizeKey(poolData.base_token), "pools", SESSION_ID);
-    if (r.found && !results.some(x => x.key === r.key)) {
+    if (r.found && r.confidence >= 0.4 && !results.some(x => x.key === r.key)) {
       results.push({ source: "pools", ...r });
     }
   }
@@ -94,7 +94,7 @@ export function recallForScreening(poolData) {
   // Check strategy patterns by bin_step
   if (poolData?.bin_step) {
     const r = s.recall(`bid_ask_bs${poolData.bin_step}`, "strategies", SESSION_ID);
-    if (r.found) results.push({ source: "strategies", ...r });
+    if (r.found && r.confidence >= 0.4) results.push({ source: "strategies", ...r });
   }
 
   return results;
@@ -106,18 +106,42 @@ export function recallForScreening(poolData) {
 export function recallForManagement(position) {
   const s = getShelf();
   const results = [];
+  const seen = new Set();
 
-  // Position objects have `pair` (e.g. "Gany-SOL"), not `pool_name`
+  const MIN_CONFIDENCE = 0.4;
+  const addResult = (source, r) => {
+    if (r.found && r.confidence >= MIN_CONFIDENCE && !seen.has(r.key)) {
+      seen.add(r.key);
+      results.push({ source, ...r });
+    }
+  };
+
+  // 1. Pool name — direct history for this specific pool
   const rawKey = position?.pair || position?.pool_name;
   if (rawKey) {
     const poolKey = sanitizeKey(rawKey);
-    const r = s.recall(poolKey, "pools", SESSION_ID);
-    if (r.found) results.push({ source: "pools", ...r });
+    addResult("pools", s.recall(poolKey, "pools", SESSION_ID));
   }
 
-  // Check for learned lessons about management
-  const r = s.recall("management", "lessons", SESSION_ID);
-  if (r.found) results.push({ source: "lessons", ...r });
+  // 2. Strategy + bin step — recalls past outcomes for this combo (e.g. "bid_ask_bs125")
+  if (position?.strategy && position?.bin_step) {
+    const stratKey = `${position.strategy}_bs${position.bin_step}`;
+    addResult("strategies", s.recall(stratKey, "strategies", SESSION_ID));
+  }
+
+  // 3. Strategy alone — broader pattern (e.g. "bid_ask" across all bin steps)
+  if (position?.strategy) {
+    addResult("strategies", s.recall(position.strategy, "strategies", SESSION_ID));
+  }
+
+  // 4. Volatility range — recall patterns for similar volatility levels
+  if (position?.volatility != null) {
+    const volBucket = `volatility_${Math.round(position.volatility)}`;
+    addResult("patterns", s.recall(volBucket, "patterns", SESSION_ID));
+  }
+
+  // 5. General management lessons
+  addResult("lessons", s.recall("management", "lessons", SESSION_ID));
 
   return results;
 }
@@ -176,7 +200,38 @@ export function rememberPositionSnapshot(position) {
     s.remember("patterns", patternKey, `fee/TVL=${position.fee_tvl_ratio} at ${new Date().toISOString().slice(11, 16)}`);
   }
 
+  // Track volatility patterns — builds up data for volatility-based decisions
+  if (position.volatility != null) {
+    const volBucket = `volatility_${Math.round(position.volatility)}`;
+    s.getOrCreate("patterns");
+    s.remember("patterns", volBucket, `${pair} ${inRange} at vol=${position.volatility}, PnL ${pnl}`);
+  }
+
+  // Track strategy+bin_step performance snapshots
+  if (position.strategy && position.bin_step) {
+    const stratKey = `${position.strategy}_bs${position.bin_step}`;
+    s.remember("strategies", stratKey, `${pair} ${inRange}, PnL ${pnl}, age ${age}`);
+  }
+
   log("memory", `Snapshot stored: ${key} → ${snapshot}`);
+}
+
+/**
+ * Clean up transient nugget entries when a position closes.
+ * Removes the mid-position snapshot and pattern entries that are no longer relevant.
+ * Pool outcomes and strategy lessons are kept (they inform future decisions).
+ */
+export function forgetPositionSnapshot(position) {
+  const s = getShelf();
+  const pair = position?.pair || position?.pool_name;
+  if (!pair) return;
+  const key = pair.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 40);
+
+  // Remove transient snapshot (the "in-range, PnL X%" entry)
+  // Pool outcomes stored by rememberPoolOutcome are different keys and kept
+  try { s.forget("patterns", `${key}_feeTvl`); } catch { /* ignore */ }
+
+  log("memory", `Cleaned up transient snapshot for ${key}`);
 }
 
 /**
@@ -231,5 +286,21 @@ export function maybePromote() {
   } catch (e) {
     log("memory", `Promotion failed: ${e.message}`);
     return 0;
+  }
+}
+
+/**
+ * Log capacity warnings for any nuggets approaching their limits.
+ */
+export function checkCapacity() {
+  const s = getShelf();
+  for (const info of s.list()) {
+    try {
+      const nugget = s.get(info.name);
+      const st = nugget.status();
+      if (st.capacity_used_pct > 70) {
+        log("memory", `WARNING: ${info.name} nugget at ${st.capacity_used_pct}% capacity (${st.fact_count} facts)`);
+      }
+    } catch { continue; }
   }
 }

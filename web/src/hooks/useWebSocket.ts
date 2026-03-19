@@ -70,6 +70,24 @@ export interface CandidateData {
   total_screened: number;
 }
 
+export interface LpOverviewData {
+  total_pnl: number;
+  total_fees: number;
+  win_rate_pct: number;
+  closed_positions: number;
+  open_positions: number;
+  avg_hold_hours: number;
+  roi_pct: number;
+  pnl_unit: string;
+  total_pnl_usd: number;
+  total_pnl_sol: number;
+  total_fees_usd: number;
+  total_fees_sol: number;
+  win_rate_usd_pct: number;
+  win_rate_sol_pct: number;
+  total_pools: number;
+}
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,6 +99,7 @@ export function useWebSocket() {
   const [positions, setPositions] = useState<PositionData | null>(null);
   const [wallet, setWallet] = useState<WalletData | null>(null);
   const [candidates, setCandidates] = useState<CandidateData | null>(null);
+  const [lpOverview, setLpOverview] = useState<LpOverviewData | null>(null);
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -113,6 +132,7 @@ export function useWebSocket() {
             if (msg.positions) setPositions(msg.positions);
             if (msg.wallet) setWallet(msg.wallet);
             if (msg.candidates) setCandidates(msg.candidates);
+            if (msg.lpOverview) setLpOverview(msg.lpOverview);
             break;
           case "chat:response":
             setMessages((prev) => [...prev, { role: "assistant", content: msg.text, ts: msg.ts }]);
@@ -167,5 +187,5 @@ export function useWebSocket() {
     }
   }, []);
 
-  return { connected, messages, notifications, status, timers, positions, wallet, candidates, sendMessage };
+  return { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, sendMessage };
 }

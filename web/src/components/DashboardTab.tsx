@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { PositionData, WalletData } from "../hooks/useWebSocket";
+import type { PositionData, WalletData, LpOverviewData } from "../hooks/useWebSocket";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -8,9 +8,10 @@ import PositionCard from "./PositionCard";
 interface DashboardTabProps {
   positions: PositionData | null;
   wallet: WalletData | null;
+  lpOverview: LpOverviewData | null;
 }
 
-export default function DashboardTab({ positions, wallet }: DashboardTabProps) {
+export default function DashboardTab({ positions, wallet, lpOverview }: DashboardTabProps) {
   const oorCount = useMemo(
     () => positions?.positions.filter((p) => !p.in_range).length ?? 0,
     [positions],
@@ -41,6 +42,60 @@ export default function DashboardTab({ positions, wallet }: DashboardTabProps) {
               <div className="flex items-center gap-4">
                 <Skeleton className="h-6 w-24" />
                 <Skeleton className="h-4 w-16" />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* LP Performance Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>LP Performance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lpOverview ? (
+              <div className="space-y-2 font-mono text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">Total PnL</span>
+                  <span className={lpOverview.total_pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
+                    {lpOverview.total_pnl >= 0 ? "+" : ""}{lpOverview.total_pnl_sol.toFixed(4)} SOL
+                    <span className="text-ash/60 ml-1">(${lpOverview.total_pnl_usd.toFixed(2)})</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">Total Fees</span>
+                  <span className="text-cream">
+                    {lpOverview.total_fees_sol.toFixed(4)} SOL
+                    <span className="text-ash/60 ml-1">(${lpOverview.total_fees_usd.toFixed(2)})</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">Win Rate</span>
+                  <span className="text-cream">{lpOverview.win_rate_pct.toFixed(1)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">Closed Positions</span>
+                  <span className="text-cream">{lpOverview.closed_positions}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">Avg Hold Time</span>
+                  <span className="text-cream">{lpOverview.avg_hold_hours.toFixed(1)}h</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ash">ROI</span>
+                  <span className={lpOverview.roi_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
+                    {lpOverview.roi_pct >= 0 ? "+" : ""}{lpOverview.roi_pct.toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-4 w-3/4" />
               </div>
             )}
           </CardContent>

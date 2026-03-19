@@ -19,10 +19,11 @@ import {
   isScreeningBusy,
 } from "./session.js";
 import { emit, on } from "./notifier.js";
-import { agentLoop } from "./agent.js";
+import { agentLoop, lightChat } from "./agent.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
+import { getLpOverview } from "./tools/lp-overview.js";
 import { generateBriefing } from "./briefing.js";
 import { getPerformanceSummary, evolveThresholds } from "./lessons.js";
 import { log } from "./logger.js";
@@ -200,10 +201,11 @@ export function startServer(timersFn) {
     const timerInfo = typeof timersFn === "function" ? timersFn() : {};
 
     // Fetch live data for initial payload (non-blocking — send basic init first, then data)
-    const [wallet, positions, candidateResult] = await Promise.allSettled([
+    const [wallet, positions, candidateResult, lpOverviewResult] = await Promise.allSettled([
       getWalletBalances(),
       getMyPositions(),
       getTopCandidates({ limit: 5 }),
+      getLpOverview(),
     ]);
 
     wsSend(ws, {
@@ -221,6 +223,7 @@ export function startServer(timersFn) {
       positions: positions.status === "fulfilled" ? positions.value : null,
       wallet: wallet.status === "fulfilled" ? wallet.value : null,
       candidates: candidateResult.status === "fulfilled" ? candidateResult.value : null,
+      lpOverview: lpOverviewResult.status === "fulfilled" ? lpOverviewResult.value : null,
     });
 
     // ── Incoming messages ──
@@ -248,35 +251,34 @@ export function startServer(timersFn) {
   });
 
   // ═══════════════════════════════════════════
-  //  CHAT HANDLER
+  //  CHAT HANDLER (with message queue)
   // ═══════════════════════════════════════════
 
-  async function handleChat(ws, _wss, text) {
-    if (!text || typeof text !== "string" || !text.trim()) {
-      wsSend(ws, { type: "error", text: "Empty message" });
+  const chatQueue = [];
+  let processingChat = false;
+
+  async function processNextChat() {
+    if (processingChat || chatQueue.length === 0) return;
+
+    // Wait until agent is free
+    if (isBusy() || isManagementBusy() || isScreeningBusy()) {
+      setTimeout(processNextChat, 2000); // retry in 2s
       return;
     }
 
-    if (isBusy() || isManagementBusy() || isScreeningBusy()) {
-      wsSend(ws, {
-        type: "error",
-        text: "Agent is busy right now — try again in a moment.",
-      });
-      return;
-    }
+    processingChat = true;
+    const { ws, text } = chatQueue.shift();
 
     setBusy(true);
     try {
-      log("server", `Chat from web: ${text.trim()}`);
-      const { content } = await agentLoop(
-        text.trim(),
-        config.llm.maxSteps,
+      log("server", `Chat from web: ${text}`);
+      const { content } = await lightChat(
+        text,
         sessionHistory,
-        "GENERAL",
         config.llm.generalModel,
       );
 
-      appendHistory(text.trim(), content);
+      appendHistory(text, content);
 
       const response = {
         type: "chat:response",
@@ -284,17 +286,31 @@ export function startServer(timersFn) {
         ts: new Date().toISOString(),
       };
 
-      // Send to the originating client
       wsSend(ws, response);
-
-      // Also emit on notifier so Telegram (and other listeners) can see it
       emit("chat:response", response);
     } catch (err) {
       log("server_error", `Chat handler failed: ${err.message}`);
       wsSend(ws, { type: "error", text: `Error: ${err.message}` });
     } finally {
       setBusy(false);
+      processingChat = false;
+      processNextChat(); // process next queued message
     }
+  }
+
+  function handleChat(ws, _wss, text) {
+    if (!text || typeof text !== "string" || !text.trim()) {
+      wsSend(ws, { type: "error", text: "Empty message" });
+      return;
+    }
+
+    chatQueue.push({ ws, text: text.trim() });
+
+    if (chatQueue.length > 1) {
+      wsSend(ws, { type: "chat:response", text: `Message queued (${chatQueue.length - 1} ahead). Will process when agent is free.`, ts: new Date().toISOString() });
+    }
+
+    processNextChat();
   }
 
   // ═══════════════════════════════════════════

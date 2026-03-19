@@ -117,7 +117,9 @@ export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
     throw new Error(`Pool ${pool_address} not found`);
   }
 
-  return condensePool(pool);
+  const condensed = condensePool(pool);
+  condensed.timeframe = timeframe;
+  return condensed;
 }
 
 /**
