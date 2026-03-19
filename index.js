@@ -19,7 +19,7 @@ import { emit } from "./notifier.js";
 import { startPnlWatcher, stopPnlWatcher } from "./pnl-watcher.js";
 import { recordPositionSnapshot as recordPoolSnapshot, recallForPool } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
-import { getTokenHolders, getTokenNarrative } from "./tools/token.js";
+import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import {
   sessionHistory, appendHistory, getHistory,
   isBusy, setBusy,
@@ -322,26 +322,33 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
       // Pre-load top 3 candidates with recon data in parallel
       let candidateBlocks = "";
       try {
-        const result = await getTopCandidates({ limit: 3 });
+        const result = await getTopCandidates({ limit: 5 });
         const candidates = result?.candidates || [];
         const blocks = await Promise.allSettled(candidates.map(async (c) => {
-          const [sw, holders, narrative, poolMem] = await Promise.allSettled([
+          const [sw, holders, narrative, poolMem, tokenInfo] = await Promise.allSettled([
             checkSmartWalletsOnPool({ pool_address: c.pool }),
             c.base_mint ? getTokenHolders({ mint: c.base_mint }) : null,
             c.base_mint ? getTokenNarrative({ mint: c.base_mint }) : null,
             recallForPool(c.pool),
+            c.base_mint ? getTokenInfo({ query: c.base_mint }) : null,
           ]);
           const swResult = sw.status === "fulfilled" ? sw.value : null;
           const holdResult = holders.status === "fulfilled" ? holders.value : null;
           const narrResult = narrative.status === "fulfilled" ? narrative.value : null;
           const memResult = poolMem.status === "fulfilled" ? poolMem.value : null;
+          const infoResult = tokenInfo.status === "fulfilled" ? tokenInfo.value : null;
+          const tokenData = infoResult?.results?.[0];
 
           let block = `[${c.name}] pool: ${c.pool} | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders}`;
+          if (tokenData) {
+            if (tokenData.mcap) block += ` | mcap: $${(tokenData.mcap / 1000).toFixed(0)}k`;
+            if (tokenData.stats_1h?.price_change) block += ` | 1h: ${tokenData.stats_1h.price_change}%`;
+          }
           if (swResult?.found?.length > 0) block += `\n  Smart wallets: ${swResult.found.length} found`;
           else block += `\n  Smart wallets: none`;
           if (holdResult?.global_fees_sol != null) block += ` | global_fees: ${holdResult.global_fees_sol} SOL`;
           if (holdResult?.top_10_real_holders_pct != null) block += ` | top10: ${holdResult.top_10_real_holders_pct}%`;
-          if (narrResult?.narrative) block += `\n  Narrative: ${narrResult.narrative.slice(0, 150)}`;
+          if (narrResult?.narrative) block += `\n  Narrative: ${narrResult.narrative.slice(0, 500)}`;
           if (memResult) block += `\n  Memory: ${memResult}`;
           return block;
         }));
