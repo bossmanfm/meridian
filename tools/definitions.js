@@ -173,8 +173,7 @@ CHOOSING YOUR RANGE:
    - Top LPer patterns (scalpers use tighter ranges, holders use wider)
    - Volatility (higher vol = consider wider range to stay in range longer)
    - Your conviction level
-3. Call calculate_bins with your target % and the pool's bin_step to get exact bin count
-4. Deploy with that bin count
+3. Deploy with price_range_pct set to your target % — bins are calculated automatically
 
 The bin COUNT needed varies dramatically by bin_step:
 - bin_step 100: 50% range = 69 bins
@@ -1086,44 +1085,4 @@ BAD signals: empty/null, pure hype only, completely generic, copy-paste of anoth
     }
   },
 
-  // ─── Bin Calculator ────────────────────────────────────────────
-
-  {
-    type: "function",
-    function: {
-      name: "calculate_bins",
-      description: `Convert a target % range to bin count for deploy_position.
-
-RULES:
-1. Call ONCE — pick your target range first (25-50% typical), call once, use the result as bins_below.
-2. DO NOT call multiple times to explore. One call, one result, deploy with it.
-3. Minimum deploy range is 20 bins. deploy_position will REJECT anything below 20.
-4. Default to 35% range if unsure. For volatile tokens use 40-50%.
-
-Quick reference (bin_step → bins for common ranges):
-  bin_step 80:  25%→36 bins, 35%→55 bins, 50%→87 bins
-  bin_step 100: 25%→29 bins, 35%→43 bins, 50%→69 bins
-  bin_step 125: 25%→23 bins, 35%→34 bins, 50%→55 bins
-
-Also works in reverse: pass bin_count to see what % range it covers.`,
-      parameters: {
-        type: "object",
-        properties: {
-          bin_step: {
-            type: "number",
-            description: "Pool bin step (e.g. 20, 80, 100, 125)"
-          },
-          price_range_pct: {
-            type: "number",
-            description: "Desired price range in % (e.g. 50 for 50% drop). Provide this OR bin_count."
-          },
-          bin_count: {
-            type: "number",
-            description: "Number of bins. If provided instead of price_range_pct, returns the % range covered."
-          }
-        },
-        required: ["bin_step"]
-      }
-    }
-  }
 ];
