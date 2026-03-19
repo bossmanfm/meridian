@@ -163,8 +163,8 @@ WHEN TO USE WHICH:
 HARD RULES:
 - Bin Step: Screening filters apply (config minBinStep/maxBinStep). If user specifies a pool, deploy regardless of bin step.
 
-MANDATORY: Call calculate_bins BEFORE every deploy_position call. No exceptions.
-It returns the exact bin count for your target % range at the pool's bin_step. Do NOT guess bin counts.
+MANDATORY: Call calculate_bins ONCE before every deploy_position. Pass the returned bin count as bins_below in deploy_position. NEVER pass bins_below=0 — that creates a useless 1-bin position.
+Minimum bins_below for any deploy: 10 (covers ~10% at bin_step 100).
 
 CHOOSING YOUR RANGE:
 1. Call study_top_lpers — see what range and hold time works for successful LPers in that pool

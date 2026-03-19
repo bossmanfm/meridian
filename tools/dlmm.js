@@ -118,6 +118,14 @@ export async function deployPosition({
   const hasBaseToken = (amount_x ?? 0) > 0;
   const activeBinsAbove = bins_above ?? (activeStrategy === "spot" && hasBaseToken ? activeBinsBelow : 0);
 
+  // Safety: reject 0-bin deploys (wastes gas, traps liquidity in 1 bin)
+  if (activeBinsBelow + activeBinsAbove < 1) {
+    return {
+      success: false,
+      error: `Rejected: total bins = ${activeBinsBelow + activeBinsAbove}. Must deploy with at least 1 bin of range. Use calculate_bins to determine the correct bin count for your target % range.`,
+    };
+  }
+
   if (process.env.DRY_RUN === "true") {
     return {
       dry_run: true,
