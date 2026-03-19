@@ -163,21 +163,26 @@ WHEN TO USE WHICH:
 HARD RULES:
 - Bin Step: Screening filters apply (config minBinStep/maxBinStep). If user specifies a pool, deploy regardless of bin step.
 
-BIN COUNT vs BIN STEP — CRITICAL MATH:
-Each bin covers (bin_step / 10000) % of price. Lower bin_step = smaller per-bin range = MORE bins needed for the same % coverage.
-- bin_step 100: 1 bin = 1.0% → 50% range ≈ 69 bins
-- bin_step 80:  1 bin = 0.8% → 50% range ≈ 86 bins
-- bin_step 20:  1 bin = 0.2% → 50% range ≈ 347 bins
+MANDATORY: Call calculate_bins BEFORE every deploy_position call. No exceptions.
+It returns the exact bin count for your target % range at the pool's bin_step. Do NOT guess bin counts.
 
-DO NOT use the same bin count across different bin steps. Always scale bins to match the intended % range.
-Formula: bins = ceil(log(1 - pct) / log(1 + bin_step/10000))
+CHOOSING YOUR RANGE:
+1. Call study_top_lpers — see what range and hold time works for successful LPers in that pool
+2. Decide your target % range based on:
+   - Top LPer patterns (scalpers use tighter ranges, holders use wider)
+   - Volatility (higher vol = consider wider range to stay in range longer)
+   - Your conviction level
+3. Call calculate_bins with your target % and the pool's bin_step to get exact bin count
+4. Deploy with that bin count
 
-BIN RANGE GUIDELINES (when user hasn't specified — assumes bin_step 100):
-- Low volatility (<3) → 35–45 bins (~30-36% range at bs100)
-- Medium volatility (3–6) → 45–55 bins (~36-42% range at bs100)
-- High volatility (>6) → 55–69 bins (~42-50% range at bs100)
-- For other bin steps: scale proportionally. E.g. bs80 needs 1.25x more bins, bs20 needs 5x more bins.
-- Wide-range strategies: up to 350 bins (auto multi-tx). Max 1400 total.
+The bin COUNT needed varies dramatically by bin_step:
+- bin_step 100: 50% range = 69 bins
+- bin_step 80:  50% range = 86 bins
+- bin_step 50:  50% range = 139 bins
+- bin_step 20:  50% range = 347 bins
+
+NEVER use a fixed bin count like "45 bins" across different bin steps — that's 36% at bs100 but only 20% at bs50.
+Wide ranges (>69 bins) are handled automatically via multi-tx.
 
 WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
       parameters: {
@@ -1079,15 +1084,18 @@ BAD signals: empty/null, pure hype only, completely generic, copy-paste of anoth
     type: "function",
     function: {
       name: "calculate_bins",
-      description: `Calculate the exact number of bins needed for a given price range % and bin step.
-ALWAYS call this before deploying when you need to convert a % range to bins, especially on low bin_step pools where the math matters most.
+      description: `MANDATORY — call this BEFORE every deploy_position. No exceptions.
+Returns the exact bin count for a target % range at the pool's bin_step.
+
+44 bins at bin_step 50 = only 20% range. 44 bins at bin_step 100 = 36% range. The same bin count means completely different ranges depending on bin_step. NEVER guess.
 
 Examples:
-- 50% range at bin_step 100 → 69 bins
-- 50% range at bin_step 20  → 347 bins
-- 30% range at bin_step 80  → 45 bins
+- calculate_bins(bin_step=100, price_range_pct=50) → 69 bins
+- calculate_bins(bin_step=80, price_range_pct=50) → 86 bins
+- calculate_bins(bin_step=50, price_range_pct=40) → 102 bins
+- calculate_bins(bin_step=50, bin_count=44) → shows it's only 20% range
 
-Also returns the reverse: given a bin count, shows the % range it covers.`,
+Also works in reverse: pass bin_count to see what % range it covers.`,
       parameters: {
         type: "object",
         properties: {
