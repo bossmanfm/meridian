@@ -425,10 +425,10 @@ export async function getMyPositions({ force = false } = {}) {
           const { getPoolDetail } = await import("./screening.js");
           const poolDetail = await getPoolDetail({ pool_address: r.pool, timeframe: "1h" }).catch(() => null);
 
-          // Infer strategy from bin range: all bins below active = bid_ask, spans both = spot
-          const inferredStrategy = (p.upperBinId <= p.poolActiveBinId) ? "bid_ask"
-            : (p.lowerBinId >= p.poolActiveBinId) ? "bid_ask"  // token-only or edge case
-            : "spot";
+          // Infer strategy: if no base token was deposited (amount_x = 0), it's bid_ask
+          // regardless of where active bin is now (price may have moved into the range)
+          const depositedX = parseFloat(p.allTimeDeposits?.tokenX?.amount || 0);
+          const inferredStrategy = depositedX === 0 ? "bid_ask" : "spot";
 
           const depositSol = parseFloat(p.allTimeDeposits?.tokenY?.amountSol || 0);
           const depositUsd = parseFloat(p.allTimeDeposits?.total?.usd || 0);
@@ -508,7 +508,7 @@ export async function getMyPositions({ force = false } = {}) {
     }));
 
     const result = { wallet: walletAddress, total_positions: positions.length, positions };
-    syncOpenPositions(positions.map((p) => p.position));
+    await syncOpenPositions(positions.map((p) => p.position));
     _positionsCache = result;
     _positionsCacheAt = Date.now();
     return result;

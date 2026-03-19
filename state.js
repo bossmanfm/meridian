@@ -329,7 +329,7 @@ export function setLastBriefingDate() {
  */
 const SYNC_GRACE_MS = 5 * 60_000; // don't auto-close positions deployed < 5 min ago
 
-export function syncOpenPositions(active_addresses) {
+export async function syncOpenPositions(active_addresses) {
   const state = load();
   const activeSet = new Set(active_addresses);
   let changed = false;
@@ -350,6 +350,49 @@ export function syncOpenPositions(active_addresses) {
     pos.notes.push(`Auto-closed during state sync (not found on-chain)`);
     changed = true;
     log("state", `Position ${posId} auto-closed (missing from on-chain data)`);
+
+    // Fetch final PnL from LP Agent and record performance
+    try {
+      const { fetchClosedPositionData } = await import("./tools/lp-overview.js");
+      const closedData = await fetchClosedPositionData(posId);
+      if (closedData) {
+        const { recordPerformance } = await import("./lessons.js");
+        const minutesHeld = pos.deployed_at
+          ? Math.floor((Date.now() - new Date(pos.deployed_at).getTime()) / 60000)
+          : Math.round((closedData.age_hours || 0) * 60);
+        let minutesOOR = 0;
+        if (pos.out_of_range_since) {
+          minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
+        }
+
+        await recordPerformance({
+          position: posId,
+          pool: pos.pool || closedData.pool,
+          pool_name: pos.pool_name || closedData.pair || "unknown",
+          strategy: pos.strategy || closedData.strategy,
+          bin_range: pos.bin_range || { min: closedData.lower_bin, max: closedData.upper_bin },
+          bin_step: pos.bin_step || closedData.bin_step,
+          volatility: pos.volatility || null,
+          fee_tvl_ratio: pos.fee_tvl_ratio || null,
+          organic_score: pos.organic_score || null,
+          amount_sol: pos.amount_sol || closedData.initial_value_sol,
+          base_mint: pos.base_mint || closedData.base_mint,
+          fees_earned_usd: closedData.fees_usd,
+          final_value_usd: closedData.final_value_usd,
+          initial_value_usd: pos.initial_value_usd || closedData.initial_value_usd,
+          actual_pnl_usd: closedData.pnl_usd,
+          actual_pnl_pct: closedData.pnl_pct,
+          minutes_in_range: Math.max(0, minutesHeld - minutesOOR),
+          minutes_held: minutesHeld,
+          close_reason: "external close (detected during sync)",
+        });
+
+        pos.notes.push(`LP Agent PnL: ${closedData.pnl_pct}% ($${closedData.pnl_usd})`);
+        log("state", `Recorded performance for externally closed ${posId}: PnL ${closedData.pnl_pct}%`);
+      }
+    } catch (e) {
+      log("state_warn", `Could not fetch LP Agent data for closed position ${posId}: ${e.message}`);
+    }
   }
 
   if (changed) save(state);

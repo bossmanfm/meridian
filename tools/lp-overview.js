@@ -116,3 +116,62 @@ export async function getLpOverviewSummary() {
 
 function round2(n) { return n != null ? Math.round(n * 100) / 100 : 0; }
 function round4(n) { return n != null ? Math.round(n * 10000) / 10000 : 0; }
+
+/**
+ * Fetch historical data for a specific closed position from LP Agent.
+ * Used to record accurate PnL when positions are closed externally.
+ *
+ * @param {string} positionAddress - The position public key
+ * @returns {Object|null} Position data or null if not found
+ */
+export async function fetchClosedPositionData(positionAddress) {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const owner = await getWalletAddress();
+    if (!owner) return null;
+
+    // Fetch recent historical positions and find the matching one
+    const res = await fetch(
+      `${LPAGENT_API}/lp-positions/historical?owner=${owner}&page=1&limit=50`,
+      { headers: { "x-api-key": apiKey } }
+    );
+
+    if (!res.ok) return null;
+
+    const json = await res.json();
+    const positions = json.data?.data || [];
+    const match = positions.find(p => p.position === positionAddress || p.tokenId === positionAddress);
+    if (!match) return null;
+
+    const { config } = await import("../config.js");
+    const useSol = config.management.pnlUnit === "sol";
+
+    return {
+      position: match.position || match.tokenId,
+      pool: match.pool,
+      pair: match.pairName ? `${match.pairName}-${match.tokenName1 || "SOL"}` : null,
+      strategy: match.strategyType?.toLowerCase().includes("spot") ? "spot" : "bid_ask",
+      pnl_usd: round2(match.pnl?.value ?? 0),
+      pnl_sol: round4(match.pnl?.valueNative ?? 0),
+      pnl_pct: round2(useSol ? (match.pnl?.percentNative ?? 0) : (match.pnl?.percent ?? 0)),
+      initial_value_usd: round2(match.inputValue ?? 0),
+      initial_value_sol: round4(match.inputNative ?? 0),
+      final_value_usd: round2(match.outputValue ?? 0),
+      fees_usd: round2(match.collectedFee ?? 0),
+      fees_sol: round4(match.collectedFeeNative ?? 0),
+      il_usd: round2(match.impermanentLoss ?? 0),
+      age_hours: round2(parseFloat(match.ageHour || 0)),
+      lower_bin: match.tickLower,
+      upper_bin: match.tickUpper,
+      bin_step: match.poolInfo?.tickSpacing || null,
+      base_mint: match.token0,
+      closed_at: match.closeAt || match.close_At,
+      created_at: match.createdAt,
+    };
+  } catch (e) {
+    log("lp_overview", `Failed to fetch closed position data: ${e.message}`);
+    return null;
+  }
+}
