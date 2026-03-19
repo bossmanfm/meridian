@@ -98,6 +98,7 @@ export async function deployPosition({
   strategy,
   bins_below,
   bins_above,
+  price_range_pct, // NEW: pass target % range and bins are calculated automatically
   // optional pool metadata for learning (passed by agent when available)
   pool_name,
   bin_step,
@@ -111,6 +112,15 @@ export async function deployPosition({
 
   if (!["bid_ask", "spot"].includes(activeStrategy)) {
     throw new Error("Only 'bid_ask' or 'spot' strategies are allowed.");
+  }
+
+  // Auto-calculate bins from price_range_pct if provided (no need for separate calculate_bins call)
+  if (price_range_pct != null && bins_below == null) {
+    const poolBinStep = bin_step || 100; // fallback, will be overridden by pool data below
+    const stepPct = poolBinStep / 10000;
+    const pct = Math.abs(price_range_pct) / 100;
+    bins_below = Math.ceil(Math.log(1 - pct) / Math.log(1 + stepPct));
+    log("deploy", `Auto-calculated bins_below=${bins_below} from price_range_pct=${price_range_pct}% at bin_step=${poolBinStep}`);
   }
 
   const activeBinsBelow = bins_below ?? config.strategy.binsBelow;

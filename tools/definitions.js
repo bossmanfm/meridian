@@ -163,8 +163,11 @@ WHEN TO USE WHICH:
 HARD RULES:
 - Bin Step: Screening filters apply (config minBinStep/maxBinStep). If user specifies a pool, deploy regardless of bin step.
 
-MANDATORY: Call calculate_bins ONCE with your target % range (25-50%). Pass the returned bin count as bins_below in deploy_position.
-Minimum 20 bins — deploy_position REJECTS anything below 20. Default to 35% range if unsure.
+RANGE SELECTION: Pass price_range_pct to deploy_position (e.g. price_range_pct=35 for 35% range). Bins are calculated automatically from the pool's bin_step. No need to call calculate_bins separately.
+- Default: 35% if unsure
+- Volatile tokens (volatility >= 5): 40-50%
+- Stable/ranging tokens: 25-35%
+- Minimum effective range: ~20% (deploy rejects less than 20 bins)
 
 CHOOSING YOUR RANGE:
 1. Call study_top_lpers — see what range and hold time works for successful LPers in that pool
@@ -215,7 +218,11 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           bins_below: {
             type: "number",
-            description: "Number of bins below active bin (SOL / quote Y side). This is where your SOL liquidity sits. If the user specifies a value, use it exactly. If they specify a % range, convert using: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Otherwise choose based on volatility: 35–69 standard, 100–350 for wide-range. Max 1400 total."
+            description: "Number of bins below active bin. NOT NEEDED if you provide price_range_pct instead (preferred)."
+          },
+          price_range_pct: {
+            type: "number",
+            description: "PREFERRED: Target price range in % (e.g. 35 for 35% drop coverage). Bins are auto-calculated from the pool's bin_step. Use this instead of bins_below. Default 35% if unsure, 40-50% for volatile tokens. Minimum effective range is ~20%."
           },
           pool_name: { type: "string", description: "Human-readable pool name for record-keeping" },
           base_mint: { type: "string", description: "Base token mint address — used to prevent duplicate token exposure across pools" },
