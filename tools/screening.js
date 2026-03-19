@@ -228,6 +228,8 @@ function condensePool(p) {
 
     // Core metrics
     active_tvl: round(p.active_tvl),
+    volume: round(p.volume),
+    fee: round(p.fee),
     fee_active_tvl_ratio: p.fee_active_tvl_ratio > 0
       ? fix(p.fee_active_tvl_ratio, 4)
       : (p.active_tvl > 0 ? fix((p.fee / p.active_tvl) * 100, 4) : 0),
