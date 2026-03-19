@@ -105,21 +105,28 @@ function startCronJobs() {
       const { content } = await agentLoop(`
 MANAGEMENT CYCLE
 
+HARD CLOSE RULES (check in order, close immediately if triggered — no further analysis):
+1. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
+2. minutes_out_of_range >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout)
+3. Position instruction condition met → CLOSE immediately
+4. fee_active_tvl_ratio < 0.01% AND volume collapsed → CLOSE (yield dead)
+
+These rules come from user-config. They are not suggestions. Do not override with BIAS TO HOLD.
+
+STEPS:
 1. get_my_positions — check all open positions.
 2. For each position:
    - Call get_position_pnl.
-   - Check state summary for any position instruction (e.g. "close at 5% profit").
-   - INSTRUCTION OVERRIDE: If instruction condition IS MET → close immediately, no further analysis.
-   - INSTRUCTION OVERRIDE: If instruction condition NOT YET MET → hold, regardless of other signals.
-   - If no instruction: BIAS = STAY. Only close if yield died, pool collapsed, or extreme loss.
-3. If closing: swap base tokens to SOL.
+   - Apply HARD CLOSE RULES above in order. First match → close, stop checking.
+   - If no rule triggers: HOLD. Do not close for any other reason.
+3. If closing: swap base tokens to SOL immediately after.
 4. After any close — recalibrate management interval (MANDATORY):
-   - No positions remaining → update_config management.managementIntervalMin = 10 (reset to default)
-   - Positions still open → keep current interval (already set by deploy volatility)
+   - No positions remaining → update_config management.managementIntervalMin = 10
+   - Positions still open → keep current interval
 
 REPORT FORMAT (Strictly follow this for each position):
 **[PAIR]** | Age: [X]m | Fees: $[X] | PnL: [X]%
-**Instruction:** [instruction if set, else "none"]
+**Rule triggered:** [rule number or "none"]
 **Decision:** [STAY/CLOSE]
 **Reason:** [1 short sentence]
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
