@@ -79,6 +79,15 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
    - HARD RULE: Bin steps must be [80-125].
    - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
    - Focus on one high-conviction deployment per cycle.
+
+SPOT STRATEGY BIN DIRECTION — CRITICAL:
+   - SOL (Y / quote) fills bins BELOW the active bin only
+   - Base token (X) fills bins ABOVE the active bin only
+   - SOL-only spot: set bins_below = range, bins_above = 0 (same direction as bid_ask)
+   - Token-only spot: set bins_below = 0, bins_above = range
+   - Two-sided spot: split bins proportionally — e.g. 80% SOL / 20% token conviction → bins_below = 40, bins_above = 10
+   - If depositing only SOL, NEVER set bins_above > 0 — those bins will be empty and waste range
+   - Default to SOL-only bid_ask unless you have strong conviction to take token exposure
 `;
   } else if (agentType === "MANAGER") {
     prompt += `Role: MANAGER

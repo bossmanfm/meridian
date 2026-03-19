@@ -128,8 +128,6 @@ export function startServer(timersFn) {
     "deploy",
     "close",
     "out_of_range",
-    "cycle:management",
-    "cycle:screening",
     "briefing",
   ];
 
@@ -138,6 +136,33 @@ export function startServer(timersFn) {
       broadcast(wss, { type: "notification", event: eventName, data });
     });
   }
+
+  // Post-cycle data broadcasts — send notification + fresh structured data
+  on("cycle:management", async (data) => {
+    broadcast(wss, { type: "notification", event: "cycle:management", data });
+    const [pos, wal] = await Promise.allSettled([getMyPositions(), getWalletBalances()]);
+    if (pos.status === "fulfilled") broadcast(wss, { type: "positions", data: pos.value });
+    if (wal.status === "fulfilled") broadcast(wss, { type: "wallet", data: wal.value });
+  });
+
+  on("cycle:screening", async (data) => {
+    broadcast(wss, { type: "notification", event: "cycle:screening", data });
+    const cands = await getTopCandidates({ limit: 5 }).catch(() => null);
+    if (cands) broadcast(wss, { type: "candidates", data: cands });
+  });
+
+  // Also broadcast fresh data after deploy/close events
+  on("deploy", async () => {
+    const [pos, wal] = await Promise.allSettled([getMyPositions(), getWalletBalances()]);
+    if (pos.status === "fulfilled") broadcast(wss, { type: "positions", data: pos.value });
+    if (wal.status === "fulfilled") broadcast(wss, { type: "wallet", data: wal.value });
+  });
+
+  on("close", async () => {
+    const [pos, wal] = await Promise.allSettled([getMyPositions(), getWalletBalances()]);
+    if (pos.status === "fulfilled") broadcast(wss, { type: "positions", data: pos.value });
+    if (wal.status === "fulfilled") broadcast(wss, { type: "wallet", data: wal.value });
+  });
 
   on("chat:response", (data) => {
     broadcast(wss, { type: "chat:response", ...data });
@@ -168,11 +193,19 @@ export function startServer(timersFn) {
   //  WEBSOCKET CONNECTION HANDLING
   // ═══════════════════════════════════════════
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", async (ws) => {
     log("server", "WebSocket client connected");
 
-    // Send init payload with status, history, and timers
+    // Send init payload with status, history, timers, and data
     const timerInfo = typeof timersFn === "function" ? timersFn() : {};
+
+    // Fetch live data for initial payload (non-blocking — send basic init first, then data)
+    const [wallet, positions, candidateResult] = await Promise.allSettled([
+      getWalletBalances(),
+      getMyPositions(),
+      getTopCandidates({ limit: 5 }),
+    ]);
+
     wsSend(ws, {
       type: "init",
       status: {
@@ -185,6 +218,9 @@ export function startServer(timersFn) {
         management: timerInfo.management ?? "---",
         screening: timerInfo.screening ?? "---",
       },
+      positions: positions.status === "fulfilled" ? positions.value : null,
+      wallet: wallet.status === "fulfilled" ? wallet.value : null,
+      candidates: candidateResult.status === "fulfilled" ? candidateResult.value : null,
     });
 
     // ── Incoming messages ──

@@ -75,7 +75,7 @@ export const config = {
   llm: {
     temperature: 0.373,
     maxTokens: 4096,
-    maxSteps: 20,
+    maxSteps: u.maxSteps ?? 20,
     managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "deepseek-chat",
     screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "deepseek-reasoner",
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "deepseek-chat",

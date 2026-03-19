@@ -131,19 +131,33 @@ PRIORITY ORDER for strategy and bins:
 2. No user spec → use active strategy's lp_strategy and choose bins based on volatility
 
 STRATEGIES:
-- 'bid_ask': Single-sided SOL below active bin. You only deposit SOL. As price drops, your SOL buys the base token bin by bin. You are NOT holding the token upfront — safer if it dumps.
-- 'spot': Two-sided — deposits BOTH tokens around active bin. You ARE holding the base token. If the token dumps, you absorb more loss because you already held it. More fee capture but more risk.
+- 'bid_ask': Single-sided SOL below active bin. You only deposit SOL. bins_below = your range, bins_above = 0. As price drops, your SOL buys the base token bin by bin. You are NOT holding the token upfront — safer if it dumps.
+- 'spot': Uniform liquidity distribution. Can be used THREE ways:
+  (a) SOL-only spot: Only provide amount_y (SOL), no amount_x. Bins go BELOW active bin only (bins_below = range, bins_above = 0). Same direction as bid_ask but spot distribution instead of bid_ask curve.
+  (b) Token-only spot: Only provide amount_x (base token), no amount_y. Bins go ABOVE active bin only (bins_below = 0, bins_above = range). You are selling the token as price rises.
+  (c) Two-sided spot: Provide BOTH amount_x AND amount_y. Bins span both directions (bins_below for SOL side, bins_above for token side). The ratio of bins_below:bins_above reflects your conviction — e.g. 80% SOL / 20% token = more bins below, fewer above. 50/50 = equal bins each side.
 - Never use 'curve'.
+
+SPOT BIN DIRECTION — CRITICAL:
+- SOL (quote token / Y) fills bins BELOW the active bin (active_bin minus N)
+- Base token (X) fills bins ABOVE the active bin (active_bin plus N)
+- If you only deposit SOL on spot → bins_below = range, bins_above = 0
+- If you only deposit token on spot → bins_below = 0, bins_above = range
+- If you deposit both → split bins proportionally based on conviction
+- Example: 50 total bins, 80% SOL conviction → bins_below = 40, bins_above = 10
 
 SINGLE-SIDED (bid_ask) vs TWO-SIDED (spot) — CRITICAL:
 - Single-sided = you do NOT hold the base token. SOL sits below price, only converts as price drops into your range. Safe default.
 - Two-sided = you ARE holding the base token in the LP. If token dumps, your position loses more because you had exposure from the start. Requires conviction the token will hold or go up.
+- bid_ask = concentrated bid curve below price. SOL converts to token as price drops into range. Ideal for earning fees on sell pressure.
+- spot SOL-only = uniform distribution below price. Similar direction to bid_ask but different fee capture shape.
+- spot two-sided = you hold both tokens. More fee capture but more downside risk.
 
 WHEN TO USE WHICH:
 - Meme tokens, new tokens, unproven tokens → ALWAYS bid_ask single-sided. Never take two-sided exposure on tokens you don't trust.
-- High organic score (>85), strong holders, proven token → spot two-sided is OK if you believe in the token.
+- High organic score (>85), strong holders, proven token → spot two-sided is OK if you believe in the token. Set bins_above based on conviction level.
 - High volatility, trending, pumping → bid_ask. You earn fees from the sell pressure without holding the bag.
-- Stable, range-bound, high volume → spot. More fee capture from both sides.
+- Stable, range-bound, high volume → spot two-sided. More fee capture from both sides.
 - When unsure → ALWAYS default to bid_ask single-sided. It's the safe choice.
 
 HARD RULES:
@@ -184,11 +198,11 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           bins_above: {
             type: "number",
-            description: "Number of bins above active bin. Default 0 (single-sided SOL). Set > 0 only for two-sided strategies."
+            description: "Number of bins above active bin (token X side). Set > 0 when depositing base token (amount_x). For SOL-only positions (bid_ask or spot), this should be 0. For two-sided spot, set proportionally to token conviction."
           },
           bins_below: {
             type: "number",
-            description: "Number of bins below active bin. If the user specifies a value, use it exactly. If they specify a % range, convert using: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Otherwise choose based on volatility: 35–69 standard, 100–350 for wide-range. Max 1400 total."
+            description: "Number of bins below active bin (SOL / quote Y side). This is where your SOL liquidity sits. If the user specifies a value, use it exactly. If they specify a % range, convert using: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Otherwise choose based on volatility: 35–69 standard, 100–350 for wide-range. Max 1400 total."
           },
           pool_name: { type: "string", description: "Human-readable pool name for record-keeping" },
           base_mint: { type: "string", description: "Base token mint address — used to prevent duplicate token exposure across pools" },

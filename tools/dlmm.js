@@ -114,7 +114,9 @@ export async function deployPosition({
   }
 
   const activeBinsBelow = bins_below ?? config.strategy.binsBelow;
-  const activeBinsAbove = bins_above ?? (activeStrategy === "spot" ? activeBinsBelow : 0);
+  // For spot: only mirror bins if depositing base token (amount_x > 0), otherwise SOL-only = below only
+  const hasBaseToken = (amount_x ?? 0) > 0;
+  const activeBinsAbove = bins_above ?? (activeStrategy === "spot" && hasBaseToken ? activeBinsBelow : 0);
 
   if (process.env.DRY_RUN === "true") {
     return {
@@ -321,7 +323,7 @@ export async function getPositionPnl({ pool_address, position_address }) {
     return {
       pnl_usd:           pnlUsdVal,
       pnl_sol:           toSol(pnlUsdVal),
-      pnl_pct:           Math.round((p.pnlPctChange ?? 0) * 100) / 100,
+      pnl_pct:           Math.round(((config.management.pnlUnit === "sol" ? p.pnlSolPctChange : p.pnlPctChange) ?? 0) * 100) / 100,
       current_value_usd: Math.round(currentValueUsd * 100) / 100,
       current_value_sol: toSol(currentValueUsd),
       unclaimed_fee_usd: Math.round(unclaimedUsd * 100) / 100,
@@ -413,7 +415,7 @@ export async function getMyPositions({ force = false } = {}) {
       const totalValue    = p ? parseFloat(p.unrealizedPnl?.balances || 0) : 0;
       const collectedFees = p ? parseFloat(p.allTimeFees?.total?.usd || 0) : 0;
       const pnlUsd        = p?.pnlUsd       ?? 0;
-      const pnlPct        = p?.pnlPctChange ?? 0;
+      const pnlPct        = (config.management.pnlUnit === "sol" ? p?.pnlSolPctChange : p?.pnlPctChange) ?? 0;
 
       const tracked = getTrackedPosition(r.position);
       const ageFromPnlApi = p?.createdAt
@@ -506,7 +508,7 @@ export async function getWalletPositions({ wallet_address }) {
         unclaimed_fees_usd: Math.round((p ? (parseFloat(p.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(p.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)) : 0) * 100) / 100,
         total_value_usd:    Math.round((p ? parseFloat(p.unrealizedPnl?.balances || 0) : 0) * 100) / 100,
         pnl_usd:            Math.round((p?.pnlUsd ?? 0) * 100) / 100,
-        pnl_pct:            Math.round((p?.pnlPctChange ?? 0) * 100) / 100,
+        pnl_pct:            Math.round(((config.management.pnlUnit === "sol" ? p?.pnlSolPctChange : p?.pnlPctChange) ?? 0) * 100) / 100,
         age_minutes:        p?.createdAt ? Math.floor((Date.now() - p.createdAt * 1000) / 60000) : null,
       };
     });

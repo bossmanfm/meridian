@@ -1,5 +1,5 @@
 import { Wifi, WifiOff } from "lucide-react";
-import type { StatusInfo, TimerInfo } from "../hooks/useWebSocket";
+import type { StatusInfo, TimerInfo, WalletData } from "../hooks/useWebSocket";
 import {
   Tooltip,
   TooltipTrigger,
@@ -13,9 +13,10 @@ interface StatusBarProps {
   connected: boolean;
   status: StatusInfo;
   timers: TimerInfo;
+  wallet: WalletData | null;
 }
 
-export default function StatusBar({ connected, status, timers }: StatusBarProps) {
+export default function StatusBar({ connected, status, timers, wallet }: StatusBarProps) {
   const busyLabel = status.managementBusy
     ? "Managing"
     : status.screeningBusy
@@ -82,6 +83,26 @@ export default function StatusBar({ connected, status, timers }: StatusBarProps)
             <TooltipContent>Time until next screening cycle</TooltipContent>
           </Tooltip>
         </div>
+
+        <Separator orientation="vertical" className="h-3" />
+
+        {/* Wallet */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="font-mono text-[11px] text-ash">
+              SOL:{" "}
+              {wallet ? (
+                <>
+                  <span className="text-cream">{wallet.sol.toFixed(3)}</span>
+                  <span className="text-ash/60 ml-1">(${wallet.sol_usd.toFixed(0)})</span>
+                </>
+              ) : (
+                <Skeleton className="h-3 w-14 inline-block" />
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Wallet balance — SOL ${wallet?.sol_price.toFixed(2) ?? "..."}</TooltipContent>
+        </Tooltip>
 
         <div className="flex-1" />
 
