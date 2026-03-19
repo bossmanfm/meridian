@@ -474,8 +474,8 @@ if (isTTY) {
     try {
       log("telegram", `Incoming: ${text}`);
       const isDeployRequest = /\bdeploy\b|\bopen position\b|\blp into\b|\badd liquidity\b/i.test(text);
-      const activeModel = isDeployRequest ? config.llm.screeningModel : config.llm.generalModel;
-      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, "GENERAL", activeModel);
+      const agentRole = isDeployRequest ? "SCREENER" : "GENERAL";
+      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, config.llm.generalModel);
       appendHistory(text, content);
       await sendMessage(content);
     } catch (e) {
