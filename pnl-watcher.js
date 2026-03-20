@@ -89,11 +89,15 @@ export async function runPnlWatcher() {
 
         // ─── Swap base token back to SOL ──────────────────────────
         try {
-          const walletBalances = await getWalletBalances();
-          const baseMint = p.base_mint;
+          // Try base_mint from position, fall back to tracked state
+          let baseMint = p.base_mint;
+          if (!baseMint) {
+            const tracked = loadState().positions?.[p.position];
+            baseMint = tracked?.base_mint || null;
+          }
 
-          // Skip if no base mint, or base mint is SOL itself
           if (baseMint && baseMint !== SOL_MINT) {
+            const walletBalances = await getWalletBalances();
             const baseToken = walletBalances.tokens?.find((t) => t.mint === baseMint);
 
             if (baseToken && baseToken.balance > 0 && (baseToken.usd ?? 0) >= 0.10) {
@@ -111,6 +115,8 @@ export async function runPnlWatcher() {
                 log("pnl_watcher_warn", `Swap failed for ${baseMint.slice(0, 8)}: ${swapResult?.error || "unknown"}`);
               }
             }
+          } else {
+            log("pnl_watcher_warn", `No base_mint for ${p.pair || p.position.slice(0, 8)} — swap skipped`);
           }
         } catch (swapErr) {
           log("pnl_watcher_warn", `Post-close swap error: ${swapErr.message}`);

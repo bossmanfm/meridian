@@ -377,6 +377,7 @@ export async function deployPosition({
       position: newPosition.publicKey.toString(),
       pool: pool_address,
       pool_name,
+      base_mint: pool.lbPair.tokenXMint.toBase58(),
       strategy: activeStrategy,
       bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
       bin_step: resolvedBinStep,
@@ -588,6 +589,7 @@ export async function getMyPositions({ force = false } = {}) {
             position: r.position,
             pool: r.pool,
             pool_name: poolDetail?.name || r.pair || r.pool.slice(0, 8),
+            base_mint: r.base_mint || poolDetail?.base?.mint || null,
             strategy: inferredStrategy,
             bin_range: {
               min: p.lowerBinId,

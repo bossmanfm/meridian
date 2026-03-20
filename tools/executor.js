@@ -168,7 +168,9 @@ const toolMap = {
 
     for (const [key, val] of Object.entries(changes)) {
       if (!CONFIG_KEY_MAP[key]) { unknown.push(key); continue; }
-      applied[key] = val;
+      // Coerce numeric strings to numbers (model sometimes passes "5" instead of 5)
+      const coerced = typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val;
+      applied[key] = coerced;
     }
 
     if (Object.keys(applied).length === 0) {

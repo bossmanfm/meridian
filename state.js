@@ -58,6 +58,7 @@ export function trackPosition({
   organic_score,
   initial_value_usd,
   deployed_at,
+  base_mint,
   adopted = false,
 }) {
   const state = load();
@@ -65,6 +66,7 @@ export function trackPosition({
     position,
     pool,
     pool_name,
+    base_mint: base_mint || null,
     strategy,
     bin_range,
     amount_sol,

@@ -160,31 +160,15 @@ Quick access to all commands + natural language suggestions.
 
 ### Install
 
-Meridian depends on [Nuggets](https://github.com/NeoVertex1/nuggets) for its holographic memory system. Both repos must be cloned into the **same parent directory**:
-
 ```bash
-# Clone both repos side by side
-git clone https://github.com/NeoVertex1/nuggets.git
 git clone https://github.com/fciaf420/meridian.git
-
-# Your folder structure should look like:
-#   parent/
-#   ├── nuggets/       ← holographic memory library
-#   └── meridian/      ← the agent
-
-# Build nuggets first
-cd nuggets
-npm install
-npm run build
-cd ..
-
-# Then install meridian
 cd meridian
-npm install
-cd web && npm install && npm run build && cd ..
+bash install.sh
 ```
 
-> **Important:** `meridian/package.json` references nuggets as `"file:../nuggets"`. If nuggets is not in the same parent directory, `npm install` will fail with a missing dependency error.
+The install script clones [Nuggets](https://github.com/NeoVertex1/nuggets) (holographic memory) into the parent directory, builds it, then installs meridian and the web UI.
+
+> **Manual install:** If you prefer, clone nuggets alongside meridian (`git clone https://github.com/NeoVertex1/nuggets.git ../nuggets`), run `cd ../nuggets && npm install && npm run build`, then `cd ../meridian && npm install && cd web && npm install && npm run build`.
 
 ### Configure
 
