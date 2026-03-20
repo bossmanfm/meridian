@@ -143,32 +143,31 @@ export async function deployPosition({
     && !((amount_x ?? 0) > 0);
 
   let hasBaseToken = (amount_x ?? 0) > 0;
-  const hasSolSide = totalSolAmount > 0;
-  const totalRangeBins = bins_below ?? null;
+  const hasSol = totalSolAmount > 0;
 
-  if (activeStrategy === "spot" && bins_above == null) {
-    if (price_range_pct > 0 && totalRangeBins != null) {
-      if (needsAutoSwap || (hasBaseToken && hasSolSide)) {
-        const split = splitRangeBins(totalRangeBins, sol_split_pct ?? 50);
-        bins_below = split.binsBelow;
-        bins_above = split.binsAbove;
-        log("deploy", `Split ${sol_split_pct ?? 50}% SOL / ${100 - (sol_split_pct ?? 50)}% token: bins_below=${bins_below}, bins_above=${bins_above}`);
-      } else if (hasBaseToken && !hasSolSide) {
-        bins_below = 0;
-        bins_above = totalRangeBins;
-      } else {
-        bins_below = totalRangeBins;
-        bins_above = 0;
-      }
-    } else if (hasBaseToken && !hasSolSide) {
-      bins_above = bins_below ?? config.strategy.binsBelow;
+  if (activeStrategy === "spot" && bins_below && !bins_above) {
+    const totalRangeBins = bins_below;
+
+    if (needsAutoSwap || (hasBaseToken && hasSol)) {
+      // TWO-SIDED: split bins between SOL (below) and token (above)
+      const splitPct = sol_split_pct ?? 50;
+      const split = splitRangeBins(totalRangeBins, splitPct);
+      bins_below = split.binsBelow;
+      bins_above = split.binsAbove;
+      log("deploy", `Two-sided spot: ${splitPct}% SOL / ${100 - splitPct}% token → bins_below=${bins_below}, bins_above=${bins_above} (total ${totalRangeBins})`);
+    } else if (hasBaseToken && !hasSol) {
+      // TOKEN-ONLY: all bins above active bin
       bins_below = 0;
-    } else if (hasBaseToken || needsAutoSwap) {
-      bins_above = bins_below ?? config.strategy.binsBelow;
+      bins_above = totalRangeBins;
+      log("deploy", `Token-only spot: all ${totalRangeBins} bins above active bin`);
     } else {
+      // SOL-ONLY: all bins below active bin
       bins_above = 0;
+      log("deploy", `SOL-only spot: all ${totalRangeBins} bins below active bin`);
     }
   }
+
+  if (bins_above == null) bins_above = 0;
 
   let activeBinsBelow = bins_below ?? config.strategy.binsBelow;
   let activeBinsAbove = bins_above ?? 0;
@@ -213,18 +212,6 @@ export async function deployPosition({
   const pool = await getPool(pool_address);
   const activeBin = await pool.getActiveBin();
   resolvedBinStep ||= pool.lbPair?.binStep ?? pool.lbPair?.bin_step ?? null;
-
-  if (price_range_pct > 0 && !bins_below && resolvedBinStep) {
-    bins_below = calculateBinsForPriceRange(resolvedBinStep, price_range_pct);
-    if (sol_split_pct != null && (hasBaseToken || needsAutoSwap) && !bins_above) {
-      const split = splitRangeBins(bins_below, sol_split_pct);
-      bins_below = split.binsBelow;
-      bins_above = split.binsAbove;
-    }
-    activeBinsBelow = bins_below ?? config.strategy.binsBelow;
-    activeBinsAbove = bins_above ?? (activeStrategy === "spot" && (hasBaseToken || needsAutoSwap) ? activeBinsBelow : 0);
-    totalBins = activeBinsBelow + activeBinsAbove;
-  }
 
   // ─── Auto-swap SOL → base token for two-sided spot ────────────
   if (needsAutoSwap) {
