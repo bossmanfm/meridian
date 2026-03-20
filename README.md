@@ -153,19 +153,38 @@ Quick access to all commands + natural language suggestions.
 ### Requirements
 - Node.js 18+
 - Solana wallet (base58 private key)
-- [DeepSeek](https://platform.deepseek.com) API key (or any OpenAI-compatible provider)
+- [OpenRouter](https://openrouter.ai) API key (or any OpenAI-compatible provider)
 - [Helius](https://helius.dev) RPC URL (recommended)
 - LP Agent API key (optional, for study/overview)
 - Telegram bot token (optional, for notifications)
 
 ### Install
 
+Meridian depends on [Nuggets](https://github.com/NeoVertex1/nuggets) for its holographic memory system. Both repos must be cloned into the **same parent directory**:
+
 ```bash
+# Clone both repos side by side
+git clone https://github.com/NeoVertex1/nuggets.git
 git clone https://github.com/fciaf420/meridian.git
+
+# Your folder structure should look like:
+#   parent/
+#   ├── nuggets/       ← holographic memory library
+#   └── meridian/      ← the agent
+
+# Build nuggets first
+cd nuggets
+npm install
+npm run build
+cd ..
+
+# Then install meridian
 cd meridian
 npm install
 cd web && npm install && npm run build && cd ..
 ```
+
+> **Important:** `meridian/package.json` references nuggets as `"file:../nuggets"`. If nuggets is not in the same parent directory, `npm install` will fail with a missing dependency error.
 
 ### Configure
 
@@ -186,7 +205,9 @@ Or configure manually via `.env` + `user-config.json`.
 ### Environment Variables
 
 ```env
-DEEPSEEK_API_KEY=sk-...              # LLM inference (required)
+OPENROUTER_API_KEY=sk-or-...         # LLM inference (required)
+DEEPSEEK_API_KEY=sk-...              # Fallback provider (optional)
+LLM_PROVIDER=openrouter              # "openrouter" (default) or "deepseek"
 WALLET_PRIVATE_KEY=your_base58_key   # Solana wallet (required)
 RPC_URL=https://...helius-rpc.com    # Solana RPC (recommended: Helius)
 LPAGENT_API_KEY=key1,key2            # LP Agent (optional, comma-separated for rotation)
