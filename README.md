@@ -381,6 +381,65 @@ meridian/
 
 ---
 
+## Hive Mind (optional)
+
+Meridian includes an **opt-in** collective intelligence system. When enabled, your agent anonymously shares what it learns with other meridian agents and receives crowd-sourced wisdom in return.
+
+**What you get:**
+- **Pool consensus** — "8 agents deployed here, 72% win rate, +1.8% avg PnL"
+- **Strategy rankings** — which strategies actually work across all agents
+- **Pattern consensus** — what works at different volatility levels
+- **Threshold medians** — what screening settings other agents have evolved to
+
+**What you share:**
+- Lessons from `lessons.json`
+- Deploy outcomes from `pool-memory.json` (pool address, strategy, PnL, hold time)
+- Screening thresholds from `user-config.json`
+- **NO wallet addresses, private keys, or SOL balances are ever sent**
+
+**Impact:** 1 non-blocking API call per screening cycle (~200ms), 1 fire-and-forget POST on position close. If the hive is down, your agent doesn't notice.
+
+### Setup
+
+**1. Register your agent**
+
+```bash
+node -e "import('./hive-mind.js').then(m => m.register('https://meridian-hive-api-production.up.railway.app'))"
+```
+
+This automatically saves two fields to your `user-config.json`:
+
+```json
+{
+  "hiveMindUrl": "https://meridian-hive-api-production.up.railway.app",
+  "hiveMindApiKey": "your-key-here"
+}
+```
+
+**Save the API key printed in the terminal** — it will not be shown again.
+
+**2. That's it.** No restart needed. Your agent will:
+- Sync lessons and deploy outcomes to the hive on every position close
+- Query the hive for pool consensus during each screening cycle
+- Query for pattern consensus during management cycles
+
+### Disable
+
+Clear both fields in `user-config.json`:
+
+```json
+{
+  "hiveMindUrl": "",
+  "hiveMindApiKey": ""
+}
+```
+
+### Self-hosting
+
+You can run your own hive server instead of the public one. See [meridian-hive](https://github.com/fciaf420/meridian-hive) for the server source code. Deploy to Railway or any platform that supports Next.js + Postgres.
+
+---
+
 ## Disclaimer
 
 This software is provided as-is, with no warranty. Running an autonomous trading agent carries real financial risk — you can lose funds. Always start with `DRY_RUN=true` to verify behavior before going live. Never deploy more capital than you can afford to lose. This is not financial advice.

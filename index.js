@@ -186,6 +186,19 @@ function startCronJobs() {
         if (poolContextLines.length > 0) {
           memoryHints += `\n\nPOOL CONTEXT (from memory):\n${poolContextLines.join("\n\n")}\n`;
         }
+        // Hive mind pattern consensus (if enabled, min 10 deploys for signal)
+        try {
+          const hiveMind = await import("./hive-mind.js");
+          if (hiveMind.isEnabled()) {
+            const patterns = await hiveMind.queryPatternConsensus();
+            if (patterns && patterns.length > 0) {
+              const significant = patterns.filter(p => p.count >= 10);
+              if (significant.length > 0) {
+                memoryHints += `\n\nHIVE MIND PATTERNS (supplementary):\n${significant.slice(0, 3).map(p => `[HIVE] ${p.strategy}: ${p.win_rate}% win, ${p.avg_pnl}% avg PnL (${p.count} deploys)`).join("\n")}\n`;
+              }
+            }
+          }
+        } catch { /* hive is best-effort */ }
       } catch { /* best-effort */ }
 
       // Inject recent auto-closes from PnL watcher so LLM knows what happened
@@ -386,6 +399,17 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         if (validBlocks.length > 0) {
           candidateBlocks = `\n\nPRE-LOADED CANDIDATES (recon already done — evaluate and deploy the best one):\n${validBlocks.join("\n\n")}\n`;
         }
+        // Hive mind consensus (if enabled)
+        try {
+          const hiveMind = await import("./hive-mind.js");
+          if (hiveMind.isEnabled()) {
+            const poolAddresses = candidates.map(c => c.pool).filter(Boolean);
+            if (poolAddresses.length > 0) {
+              const hiveConsensus = await hiveMind.formatPoolConsensusForPrompt(poolAddresses);
+              if (hiveConsensus) candidateBlocks += "\n" + hiveConsensus;
+            }
+          }
+        } catch { /* hive is best-effort */ }
       } catch (e) {
         log("cron", `Pre-load failed (${e.message}), agent will fetch manually`);
       }
