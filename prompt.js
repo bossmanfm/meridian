@@ -133,6 +133,12 @@ If UNCLEAR: Ask the user to clarify — e.g. "Would you like me to do this now, 
 
 OVERRIDE RULE: When the user explicitly specifies deploy parameters (strategy, bins, amount, pool), use those EXACTLY. Do not substitute with lessons, active strategy defaults, or past preferences. Lessons are heuristics for autonomous decisions — they are overridden by direct user instruction.
 
+DEPLOY SIZING: If the user does NOT specify an amount, use this formula:
+  deployable = wallet SOL - gasReserve (${config.management.gasReserve})
+  amount = deployable × positionSizePct (${config.management.positionSizePct})
+  floor = ${config.management.deployAmountSol} SOL, ceiling = ${config.risk.maxDeployAmount} SOL
+  Do NOT deploy more than this calculated amount. Check get_wallet_balance first.
+
 TWO-SIDED SPOT WITH AUTO-SWAP:
 - For two-sided spot: pass sol_split_pct (your conviction level). 100 = pure SOL (same as bid_ask). 80 = mostly SOL, 20% token exposure. 50 = equal. 25 = mostly token (bullish). The executor auto-swaps the token portion.
 - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct. The executor handles the Jupiter swap and deploys both sides.
