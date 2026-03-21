@@ -273,6 +273,27 @@ function condensePool(p) {
   };
 }
 
+/**
+ * Fetch the current dynamic fee for a pool via the DLMM SDK (on-chain).
+ * Returns { base_fee_pct, dynamic_fee_pct } or null on failure.
+ * The SDK's getDynamicFee() includes base fee + variable fee from volatility accumulator.
+ */
+export async function fetchDynamicFee(poolAddress) {
+  try {
+    const { default: DLMM } = await import("@meteora-ag/dlmm");
+    const { Connection, PublicKey } = await import("@solana/web3.js");
+    const conn = new Connection(config.screening.rpcUrl || process.env.RPC_URL, "confirmed");
+    const pool = await DLMM.create(conn, new PublicKey(poolAddress));
+    const dynamicFee = pool.getDynamicFee();
+    const p = pool.lbPair.parameters;
+    const baseFee = (p.baseFactor * pool.lbPair.binStep) / 1_000_000;
+    return {
+      base_fee_pct: baseFee,
+      dynamic_fee_pct: parseFloat(dynamicFee.toString()),
+    };
+  } catch { return null; }
+}
+
 function round(n) {
   return n != null ? Math.round(n) : null;
 }

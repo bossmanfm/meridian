@@ -123,17 +123,18 @@ export async function syncToHive() {
 
     // ── Collect local data ──────────────────────────
 
-    // Lessons
+    // Lessons (cap at 200 most recent)
     const lessonsData = readJsonFile(LESSONS_FILE) || { lessons: [], performance: [] };
-    const lessons = lessonsData.lessons || [];
+    const lessons = (lessonsData.lessons || []).slice(-200);
 
-    // Pool deploys — flatten all pools' deploys arrays
+    // Pool deploys — flatten all pools' deploys arrays, filter out missing deployed_at
     const poolMemory = readJsonFile(POOL_MEMORY_FILE) || {};
     const deploys = [];
     for (const poolAddr of Object.keys(poolMemory)) {
       const pool = poolMemory[poolAddr];
       if (Array.isArray(pool.deploys)) {
         for (const d of pool.deploys) {
+          if (!d.deployed_at) continue;
           deploys.push({ pool_address: poolAddr, pool_name: pool.name, ...d });
         }
       }

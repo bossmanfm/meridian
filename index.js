@@ -186,6 +186,20 @@ function startCronJobs() {
         if (poolContextLines.length > 0) {
           memoryHints += `\n\nPOOL CONTEXT (from memory):\n${poolContextLines.join("\n\n")}\n`;
         }
+        // Dynamic fee context for open positions
+        try {
+          const { fetchDynamicFee } = await import("./tools/screening.js");
+          const feeFetches = await Promise.allSettled(
+            (pos.positions || []).filter(p => p.pool).map(async p => {
+              const fee = await fetchDynamicFee(p.pool);
+              return fee ? `${p.pair}: base_fee: ${fee.base_fee_pct}% | dynamic_fee: ${fee.dynamic_fee_pct}%` : null;
+            })
+          );
+          const feeLines = feeFetches.filter(f => f.status === "fulfilled" && f.value).map(f => f.value);
+          if (feeLines.length > 0) {
+            memoryHints += `\n\nDYNAMIC FEES (current):\n${feeLines.join("\n")}\n`;
+          }
+        } catch { /* best-effort */ }
         // Hive mind pattern consensus (if enabled, min 10 deploys for signal)
         try {
           const hiveMind = await import("./hive-mind.js");
@@ -367,22 +381,26 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
       try {
         const result = await getTopCandidates({ limit: 5 });
         const candidates = result?.candidates || [];
+        const { fetchDynamicFee } = await import("./tools/screening.js");
         const blocks = await Promise.allSettled(candidates.map(async (c) => {
-          const [sw, holders, narrative, poolMem, tokenInfo] = await Promise.allSettled([
+          const [sw, holders, narrative, poolMem, tokenInfo, dynFee] = await Promise.allSettled([
             checkSmartWalletsOnPool({ pool_address: c.pool }),
             c.base_mint ? getTokenHolders({ mint: c.base_mint }) : null,
             c.base_mint ? getTokenNarrative({ mint: c.base_mint }) : null,
             recallForPool(c.pool),
             c.base_mint ? getTokenInfo({ query: c.base_mint }) : null,
+            fetchDynamicFee(c.pool),
           ]);
           const swResult = sw.status === "fulfilled" ? sw.value : null;
           const holdResult = holders.status === "fulfilled" ? holders.value : null;
           const narrResult = narrative.status === "fulfilled" ? narrative.value : null;
           const memResult = poolMem.status === "fulfilled" ? poolMem.value : null;
           const infoResult = tokenInfo.status === "fulfilled" ? tokenInfo.value : null;
+          const dynFeeResult = dynFee.status === "fulfilled" ? dynFee.value : null;
           const tokenData = infoResult?.results?.[0];
 
           let block = `[${c.name}] pool: ${c.pool} | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders}`;
+          if (dynFeeResult) block += ` | base_fee: ${c.fee_pct}% | dynamic_fee: ${dynFeeResult.dynamic_fee_pct}%`;
           if (tokenData) {
             if (tokenData.mcap) block += ` | mcap: $${(tokenData.mcap / 1000).toFixed(0)}k`;
             if (tokenData.stats_1h?.price_change) block += ` | 1h: ${tokenData.stats_1h.price_change}%`;

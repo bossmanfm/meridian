@@ -51,6 +51,9 @@ NOTE: 5m windows are inherently noisy. A pool doing $100k+/hour can show $0 volu
 
 IMPORTANT: fee_active_tvl_ratio values are ALREADY in percentage form. 0.29 = 0.29%. Do NOT multiply by 100. A value of 1.0 = 1.0%, a value of 22 = 22%. Never convert.
 
+base_fee: The pool's static fee rate set at creation.
+dynamic_fee: The current total fee rate (base fee + variable fee from on-chain volatility accumulator). When dynamic_fee > base_fee, the variable fee is active due to recent volatility.
+
 `;
 
   // ═══════════════════════════════════════════════════════════════
