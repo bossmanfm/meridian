@@ -60,6 +60,7 @@ export function trackPosition({
   deployed_at,
   base_mint,
   adopted = false,
+  study_avg_hold_hours = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -80,6 +81,7 @@ export function trackPosition({
     initial_value_usd,
     deployed_at: deployed_at || new Date().toISOString(),
     adopted,
+    study_avg_hold_hours: study_avg_hold_hours || null,
     out_of_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,

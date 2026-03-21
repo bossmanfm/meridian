@@ -232,7 +232,8 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           volatility: { type: "number", description: "Pool volatility at deploy time" },
           fee_tvl_ratio: { type: "number", description: "fee/TVL ratio at deploy time" },
           organic_score: { type: "number", description: "Base token organic score at deploy time" },
-          initial_value_usd: { type: "number", description: "Estimated USD value being deployed" }
+          initial_value_usd: { type: "number", description: "Estimated USD value being deployed" },
+          study_avg_hold_hours: { type: "number", description: "Average hold time (hours) of top LPers in this pool from study_top_lpers. Used by management to compare your hold time." }
         },
         required: ["pool_address"]
       }

@@ -116,6 +116,7 @@ Decision Factors for Closing (no exit rule triggered):
 
 IMPORTANT: Do NOT call get_top_candidates or study_top_lpers while you have healthy open positions. Focus exclusively on managing what you have.
 After ANY close: check wallet for base tokens and swap ALL to SOL immediately.
+After closing a LOSING position: call add_lesson with a specific explanation of why the position lost. Include what signal you missed and what to do differently. Generic stats-only lessons are not useful.
 `;
   } else {
     prompt += `Role: GENERAL

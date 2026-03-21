@@ -139,6 +139,7 @@ function startCronJobs() {
         const pos = await getMyPositions();
         const recalls = [];
         const exits = [];
+        const holdTimeHints = [];
         for (const p of pos.positions || []) {
           // Memory recall
           const hits = recallForManagement(p);
@@ -157,12 +158,22 @@ function startCronJobs() {
               log("exit_check", `${p.pair}: ${exitAction}`);
             }
           }
+
+          // Study hold time context — compare your age to top LPers
+          if (p.study_avg_hold_hours != null) {
+            const yourHours = p.age_minutes != null ? Math.round(p.age_minutes / 6) / 10 : null;
+            const hint = `${p.pair}: Top LPer avg hold: ${p.study_avg_hold_hours}h (from study at deploy)`;
+            holdTimeHints.push(yourHours != null ? `${hint} — your age: ${yourHours}h` : hint);
+          }
         }
         if (recalls.length > 0) {
           memoryHints = `\n\nMEMORY RECALL (from past sessions):\n${recalls.join("\n")}\n`;
         }
         if (exits.length > 0) {
           exitAlerts = `\n\nEXIT ALERTS (CLOSE THESE IMMEDIATELY):\n${exits.join("\n")}\n`;
+        }
+        if (holdTimeHints.length > 0) {
+          memoryHints += `\n\nTOP LPER HOLD TIME CONTEXT:\n${holdTimeHints.join("\n")}\n`;
         }
         // Pool context from pool-memory (deploy history + live trend)
         const poolContextLines = [];
@@ -221,6 +232,13 @@ REPORT FORMAT (Strictly follow this for each position — use ${pnlUnit} values)
 **Rule triggered:** [rule number or "none"]
 **Decision:** [STAY/CLOSE]
 **Reason:** [1 short sentence]
+
+FAILURE ANALYSIS: When closing a LOSING position (negative PnL), you MUST call add_lesson with a specific, actionable lesson that explains:
+- What went wrong (entered during pump reversal? too volatile for the range? held too long for a scalper pool?)
+- What signal you missed or should have weighted differently
+- What you would do differently next time
+Do NOT write generic "FAILED: pool X with stats Y" — explain the WHY.
+Example: "AVOID: Entering NOTHING-SOL during 4h +70% pump — reversal risk is high. Top LPers hold 0.2h in this pool but we held 3.8h. Next time: match scalper cadence or skip pumping tokens."
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
       mgmtReport = content;
     } catch (error) {

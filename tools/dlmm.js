@@ -108,6 +108,7 @@ export async function deployPosition({
   fee_tvl_ratio,
   organic_score,
   initial_value_usd,
+  study_avg_hold_hours,
 }) {
   pool_address = normalizeMint(pool_address);
   const activeStrategy = strategy || config.strategy.strategy;
@@ -375,6 +376,7 @@ export async function deployPosition({
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
       initial_value_usd,
+      study_avg_hold_hours,
     });
 
     return {
@@ -644,6 +646,7 @@ export async function getMyPositions({ force = false } = {}) {
         pnl_unit: config.management.pnlUnit,
         age_minutes: ageMinutes,
         minutes_out_of_range: minutesOutOfRange(r.position),
+        study_avg_hold_hours: trackedFinal?.study_avg_hold_hours || null,
       };
     }));
 
