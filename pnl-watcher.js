@@ -49,8 +49,8 @@ export async function runPnlWatcher() {
     // Guard: skip if management cycle is currently running
     if (isManagementBusy()) return;
 
-    // Fetch positions (use cache if fresh, avoids spamming RPC every 30s)
-    const result = await getMyPositions();
+    // Force-refresh positions so PnL data is current (the whole point of the watcher)
+    const result = await getMyPositions({ force: true });
     const positions = result?.positions || [];
 
     if (positions.length === 0) return;
