@@ -186,16 +186,14 @@ function startCronJobs() {
         if (poolContextLines.length > 0) {
           memoryHints += `\n\nPOOL CONTEXT (from memory):\n${poolContextLines.join("\n\n")}\n`;
         }
-        // Dynamic fee context for open positions
+        // Dynamic fee context for open positions (sequential to avoid RPC rate limit)
         try {
           const { fetchDynamicFee } = await import("./tools/screening.js");
-          const feeFetches = await Promise.allSettled(
-            (pos.positions || []).filter(p => p.pool).map(async p => {
-              const fee = await fetchDynamicFee(p.pool);
-              return fee ? `${p.pair}: base_fee: ${fee.base_fee_pct}% | dynamic_fee: ${fee.dynamic_fee_pct}%` : null;
-            })
-          );
-          const feeLines = feeFetches.filter(f => f.status === "fulfilled" && f.value).map(f => f.value);
+          const feeLines = [];
+          for (const p of (pos.positions || []).filter(p => p.pool)) {
+            const fee = await fetchDynamicFee(p.pool);
+            if (fee) feeLines.push(`${p.pair}: base_fee: ${fee.base_fee_pct}% | dynamic_fee: ${fee.dynamic_fee_pct}%`);
+          }
           if (feeLines.length > 0) {
             memoryHints += `\n\nDYNAMIC FEES (current):\n${feeLines.join("\n")}\n`;
           }
@@ -381,22 +379,26 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
       try {
         const result = await getTopCandidates({ limit: 5 });
         const candidates = result?.candidates || [];
+        // Fetch dynamic fees sequentially to avoid RPC rate limit bursts
         const { fetchDynamicFee } = await import("./tools/screening.js");
+        const dynFeeMap = {};
+        for (const c of candidates) {
+          dynFeeMap[c.pool] = await fetchDynamicFee(c.pool);
+        }
         const blocks = await Promise.allSettled(candidates.map(async (c) => {
-          const [sw, holders, narrative, poolMem, tokenInfo, dynFee] = await Promise.allSettled([
+          const [sw, holders, narrative, poolMem, tokenInfo] = await Promise.allSettled([
             checkSmartWalletsOnPool({ pool_address: c.pool }),
             c.base_mint ? getTokenHolders({ mint: c.base_mint }) : null,
             c.base_mint ? getTokenNarrative({ mint: c.base_mint }) : null,
             recallForPool(c.pool),
             c.base_mint ? getTokenInfo({ query: c.base_mint }) : null,
-            fetchDynamicFee(c.pool),
           ]);
           const swResult = sw.status === "fulfilled" ? sw.value : null;
           const holdResult = holders.status === "fulfilled" ? holders.value : null;
           const narrResult = narrative.status === "fulfilled" ? narrative.value : null;
           const memResult = poolMem.status === "fulfilled" ? poolMem.value : null;
           const infoResult = tokenInfo.status === "fulfilled" ? tokenInfo.value : null;
-          const dynFeeResult = dynFee.status === "fulfilled" ? dynFee.value : null;
+          const dynFeeResult = dynFeeMap[c.pool] || null;
           const tokenData = infoResult?.results?.[0];
 
           let block = `[${c.name}] pool: ${c.pool} | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders}`;
