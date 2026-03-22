@@ -893,6 +893,7 @@ export async function closePosition({ position_address }) {
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: "agent decision",
+        deployed_at: tracked.deployed_at,
       });
 
       // Clean up transient nugget entries
