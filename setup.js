@@ -138,6 +138,14 @@ const rpcUrl = await ask(
   e("rpcUrl", process.env.RPC_URL || "https://api.mainnet-beta.solana.com")
 );
 
+// Extract Helius API key from RPC URL if possible
+const heliusMatch = rpcUrl.match(/api-key=([^&]+)/);
+const heliusDefault = heliusMatch?.[1] || process.env.HELIUS_API_KEY || "";
+const heliusApiKey = await ask(
+  "Helius API key (same key as RPC URL, for wallet balance)",
+  e("heliusApiKey", heliusDefault)
+);
+
 const walletKey = await ask(
   "Wallet private key (base58)",
   e("walletKey", process.env.WALLET_PRIVATE_KEY ? "*** (already set in .env)" : "")

@@ -1,4 +1,4 @@
-import { Wifi, WifiOff } from "lucide-react";
+import { Wifi, WifiOff, Network } from "lucide-react";
 import type { StatusInfo, TimerInfo, WalletData } from "../hooks/useWebSocket";
 import {
   Tooltip,
@@ -14,9 +14,10 @@ interface StatusBarProps {
   status: StatusInfo;
   timers: TimerInfo;
   wallet: WalletData | null;
+  onOpenGraph?: () => void;
 }
 
-export default function StatusBar({ connected, status, timers, wallet }: StatusBarProps) {
+export default function StatusBar({ connected, status, timers, wallet, onOpenGraph }: StatusBarProps) {
   const busyLabel = status.managementBusy
     ? "Managing"
     : status.screeningBusy
@@ -105,6 +106,20 @@ export default function StatusBar({ connected, status, timers, wallet }: StatusB
         </Tooltip>
 
         <div className="flex-1" />
+
+        {/* Mind Map */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={onOpenGraph}
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-ash/70 transition-colors hover:border-amber-300/20 hover:bg-amber-300/8 hover:text-amber-200"
+            >
+              <Network size={13} />
+              <span className="font-mono text-[10px] tracking-wider">Mind Map</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Open knowledge graph visualization</TooltipContent>
+        </Tooltip>
 
         {/* Busy indicator */}
         {(status.busy || status.managementBusy || status.screeningBusy) && (

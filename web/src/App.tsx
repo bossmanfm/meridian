@@ -5,11 +5,13 @@ import ChatPanel from "./components/ChatPanel";
 import DataSidebar from "./components/DataSidebar";
 import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
+import KnowledgeGraph from "./components/KnowledgeGraph";
 import ToastProvider from "./components/ToastProvider";
 
 export default function App() {
   const { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult } = useWebSocket();
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
 
   useToastNotifications(notifications);
 
@@ -30,7 +32,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-transparent">
-      <StatusBar connected={connected} status={status} timers={timers} wallet={wallet} />
+      <StatusBar connected={connected} status={status} timers={timers} wallet={wallet} onOpenGraph={() => setGraphOpen(true)} />
 
       <div className="relative flex flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Chat panel */}
@@ -64,6 +66,7 @@ export default function App() {
       </div>
 
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} onExecute={handleCommandExecute} />
+      <KnowledgeGraph open={graphOpen} onClose={() => setGraphOpen(false)} sendQuickAction={sendQuickAction} quickActionResult={quickActionResult} clearQuickActionResult={clearQuickActionResult} />
       <ToastProvider />
     </div>
   );

@@ -194,6 +194,7 @@ DEEPSEEK_API_KEY=sk-...              # Fallback provider (optional)
 LLM_PROVIDER=openrouter              # "openrouter" (default) or "deepseek"
 WALLET_PRIVATE_KEY=your_base58_key   # Solana wallet (required)
 RPC_URL=https://...helius-rpc.com    # Solana RPC (recommended: Helius)
+HELIUS_API_KEY=your_helius_api_key   # Same key as RPC_URL — used for wallet balance API
 LPAGENT_API_KEY=key1,key2            # LP Agent (optional, comma-separated for rotation)
 TELEGRAM_BOT_TOKEN=123456:ABC...     # Telegram notifications (optional)
 DRY_RUN=true                         # Simulate mode — no on-chain transactions
