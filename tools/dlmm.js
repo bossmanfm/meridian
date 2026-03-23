@@ -474,7 +474,7 @@ export async function getPositionPnl({ pool_address, position_address }) {
 }
 
 // ─── Get My Positions ──────────────────────────────────────────
-export async function getMyPositions({ force = false } = {}) {
+export async function getMyPositions({ force = false, connection = null } = {}) {
   if (!force && _positionsCache && Date.now() - _positionsCacheAt < POSITIONS_CACHE_TTL) {
     return _positionsCache;
   }
@@ -494,7 +494,8 @@ export async function getMyPositions({ force = false } = {}) {
     const walletPubkey = new PublicKey(walletAddress);
 
     // Owner field sits at offset 40 (8 discriminator + 32 lb_pair)
-    const accounts = await getConnection().getProgramAccounts(DLMM_PROGRAM, {
+    const rpc = connection || getConnection();
+    const accounts = await rpc.getProgramAccounts(DLMM_PROGRAM, {
       filters: [{ memcmp: { offset: 40, bytes: walletPubkey.toBase58() } }],
     });
 
