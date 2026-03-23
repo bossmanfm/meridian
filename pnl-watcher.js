@@ -6,7 +6,6 @@
  * without any LLM call.
  */
 
-import { Connection } from "@solana/web3.js";
 import { log } from "./logger.js";
 import { config } from "./config.js";
 import { updatePnlAndCheckExits } from "./state.js";
@@ -15,19 +14,6 @@ import { getWalletBalances, swapToken } from "./tools/wallet.js";
 import { emit } from "./notifier.js";
 import { isManagementBusy } from "./session.js";
 import fs from "fs";
-
-// Dedicated read-only RPC for PnL position scanning (saves primary RPC credits)
-let _pnlConnection = null;
-function getPnlConnection() {
-  if (!_pnlConnection) {
-    const url = process.env.PNL_WATCHER_RPC_URL || process.env.RPC_URL;
-    _pnlConnection = new Connection(url, "confirmed");
-    if (process.env.PNL_WATCHER_RPC_URL) {
-      log("pnl_watcher", `Using dedicated RPC for position scanning`);
-    }
-  }
-  return _pnlConnection;
-}
 
 const STATE_FILE = "./state.json";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -67,8 +53,8 @@ export async function runPnlWatcher() {
     const cached = await getMyPositions();
     if (!cached?.positions?.length) return;
 
-    // Force-refresh for accurate PnL data (uses dedicated RPC if configured)
-    const result = await getMyPositions({ force: true, connection: getPnlConnection() });
+    // Force-refresh for accurate PnL data
+    const result = await getMyPositions({ force: true });
     const positions = result?.positions || [];
 
     if (positions.length === 0) return;

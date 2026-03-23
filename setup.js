@@ -146,11 +146,6 @@ const heliusApiKey = await ask(
   e("heliusApiKey", heliusDefault)
 );
 
-const pnlWatcherRpcUrl = await ask(
-  "PnL watcher RPC URL (optional — saves primary RPC credits, leave blank to use main RPC)",
-  e("pnlWatcherRpcUrl", process.env.PNL_WATCHER_RPC_URL || "")
-);
-
 const walletKey = await ask(
   "Wallet private key (base58)",
   e("walletKey", process.env.WALLET_PRIVATE_KEY ? "*** (already set in .env)" : "")
