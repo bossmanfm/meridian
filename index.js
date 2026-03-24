@@ -204,15 +204,30 @@ After all positions, add one summary line:
       } catch { /* memory recall is best-effort */ }
 
       const { content } = await agentLoop(`
-SCREENING CYCLE — DEPLOY ONLY${memoryHints}
+SCREENING CYCLE
+${strategyBlock}
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
+${candidateContext}
+DECISION RULES:
+- HARD SKIP if fees < ${config.screening.minTokenFeesSol} SOL (bundled/scam)
+- HARD SKIP if top10 > ${config.screening.maxTop10Pct}% OR bots > ${config.screening.maxBundlersPct}%
+${config.screening.blockedLaunchpads.length ? `- HARD SKIP if launchpad is any of: ${config.screening.blockedLaunchpads.join(", ")}` : ""}
+- SKIP if narrative is empty/null or pure hype with no specific story (unless smart wallets present)
+- Bots 5–25% are normal, not a skip reason on their own
+- Smart wallets present → strong confidence boost
 
-1. get_my_positions first. Only proceed if positions < ${config.risk.maxPositions}.
-2. get_wallet_balance. Proceed if SOL >= ${config.management.minSolToOpen}.
-3. get_top_candidates, pick the best one, and call study_top_lpers.
-4. Call check_smart_wallets_on_pool for the chosen pool. Smart wallet presence = strong confidence boost. No presence = neutral, rely on fundamentals.
-5. If the pool is high-quality: get_active_bin and deploy_position.
-6. Report result and reasoning including smart wallet signal and interval set.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
+STEPS:
+1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
+2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
+   bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
+3. Report in this exact format (no tables, no extra sections):
+   Deployed: PAIR
+   bin_step=X | fee=X% | bots=X% | top10=X% | fees=XSOL
+   range=minPrice→maxPrice (downside=(minPrice/maxPrice-1)*100%)
+   smart_wallets=name1,name2 (or none)
+   narrative: <one sentence>
+   reason: <one sentence why picked over others>
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
       screenReport = content;
     } catch (error) {
       log("cron_error", `Screening cycle failed: ${error.message}`);
