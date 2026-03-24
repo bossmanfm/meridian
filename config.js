@@ -141,5 +141,10 @@ export function reloadScreeningThresholds() {
     if (fresh.maxPriceChangePct != null) s.maxPriceChangePct = fresh.maxPriceChangePct;
     if (fresh.timeframe      != null) s.timeframe      = fresh.timeframe;
     if (fresh.category       != null) s.category       = fresh.category;
+    // Also reload management thresholds that evolution may have changed
+    const m = config.management;
+    if (fresh.stopLossPct           != null) m.stopLossPct           = fresh.stopLossPct;
+    if (fresh.takeProfitFeePct      != null) m.takeProfitFeePct      = fresh.takeProfitFeePct;
+    if (fresh.outOfRangeWaitMinutes != null) m.outOfRangeWaitMinutes = fresh.outOfRangeWaitMinutes;
   } catch { /* ignore */ }
 }

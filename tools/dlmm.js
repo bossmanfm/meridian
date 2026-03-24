@@ -559,25 +559,35 @@ export async function getMyPositions({ force = false } = {}) {
           const { getPoolDetail } = await import("./screening.js");
           const poolDetail = await getPoolDetail({ pool_address: r.pool, timeframe: "1h" }).catch(() => null);
 
-          // Infer strategy from on-chain bin liquidity distribution
-          let inferredStrategy = "bid_ask"; // safe default
+          // Try LP Agent API first for accurate strategy + initial value
+          let lpAgentData = null;
           try {
-            const pool = await getPool(r.pool);
-            const posData = await pool.getPosition(new PublicKey(r.position));
-            const binData = posData.positionData?.positionBinData || [];
-            const yAmounts = binData.map(b => Number(b.positionYAmount || 0)).filter(a => a > 0);
-            if (yAmounts.length > 1) {
-              const ratio = Math.max(...yAmounts) / (Math.min(...yAmounts) || 1);
-              inferredStrategy = ratio < 2 ? "spot" : "bid_ask";
+            const { fetchClosedPositionData } = await import("../tools/lp-overview.js");
+            // LP Agent works for open positions too via historical endpoint
+            lpAgentData = await fetchClosedPositionData(r.position);
+          } catch { /* LP Agent unavailable, fall back to inference */ }
+
+          // Strategy: LP Agent > bin distribution inference > deposit-based guess
+          let inferredStrategy = lpAgentData?.strategy || "bid_ask";
+          if (!lpAgentData?.strategy) {
+            try {
+              const pool = await getPool(r.pool);
+              const posData = await pool.getPosition(new PublicKey(r.position));
+              const binData = posData.positionData?.positionBinData || [];
+              const yAmounts = binData.map(b => Number(b.positionYAmount || 0)).filter(a => a > 0);
+              if (yAmounts.length > 1) {
+                const ratio = Math.max(...yAmounts) / (Math.min(...yAmounts) || 1);
+                inferredStrategy = ratio < 2 ? "spot" : "bid_ask";
+              }
+            } catch {
+              const depositedX = parseFloat(p.allTimeDeposits?.tokenX?.amount || 0);
+              inferredStrategy = depositedX === 0 ? "bid_ask" : "spot";
             }
-          } catch {
-            // Fallback: check deposit amounts — no base token deposited = bid_ask
-            const depositedX = parseFloat(p.allTimeDeposits?.tokenX?.amount || 0);
-            inferredStrategy = depositedX === 0 ? "bid_ask" : "spot";
           }
 
-          const depositSol = parseFloat(p.allTimeDeposits?.tokenY?.amountSol || 0);
-          const depositUsd = parseFloat(p.allTimeDeposits?.total?.usd || 0);
+          // Initial value: LP Agent > Meteora PnL API
+          const depositSol = lpAgentData?.initial_value_sol || parseFloat(p.allTimeDeposits?.tokenY?.amountSol || 0);
+          const depositUsd = lpAgentData?.initial_value_usd || parseFloat(p.allTimeDeposits?.total?.usd || 0);
 
           trackPosition({
             position: r.position,
@@ -604,7 +614,8 @@ export async function getMyPositions({ force = false } = {}) {
             adopted: true,
           });
 
-          log("adopt", `Auto-adopted position ${r.position.slice(0, 8)} in ${poolDetail?.name || r.pool.slice(0, 8)} (${inferredStrategy}, ${depositSol.toFixed(2)} SOL)`);
+          const source = lpAgentData?.strategy ? "LP Agent" : "inferred";
+          log("adopt", `Auto-adopted position ${r.position.slice(0, 8)} in ${poolDetail?.name || r.pool.slice(0, 8)} (${inferredStrategy} via ${source}, ${depositSol.toFixed(2)} SOL, $${depositUsd.toFixed(2)})`);
         } catch (e) {
           log("adopt_warn", `Failed to auto-adopt ${r.position.slice(0, 8)}: ${e.message}`);
         }

@@ -158,13 +158,22 @@ export async function recordPerformance(perf) {
     log("memory", `Failed to store in nuggets: ${e.message}`);
   }
 
-  // Evolve thresholds every 5 closed positions
-  if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
+  // Evolve thresholds every 5 closed positions (compare against stored counter, not modulo)
+  {
     const { config, reloadScreeningThresholds } = await import("./config.js");
-    const result = evolveThresholds(data.performance, config);
-    if (result?.changes && Object.keys(result.changes).length > 0) {
-      reloadScreeningThresholds();
-      log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
+    const lastEvolvedAt = config.screening._positionsAtEvolution || 0;
+    if (data.performance.length - lastEvolvedAt >= MIN_EVOLVE_POSITIONS) {
+      const result = evolveThresholds(data.performance, config);
+      if (result?.changes && Object.keys(result.changes).length > 0) {
+        reloadScreeningThresholds();
+        log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
+      }
+      // Also evolve from lessons/nuggets
+      const lessonResult = evolveFromLessons(data.lessons || [], config);
+      if (lessonResult?.changes && Object.keys(lessonResult.changes).length > 0) {
+        reloadScreeningThresholds();
+        log("evolve", `Lesson-based evolution: ${JSON.stringify(lessonResult.changes)}`);
+      }
     }
   }
 
@@ -365,6 +374,102 @@ export function evolveThresholds(perfData, config) {
     }
   }
 
+  // ── 4. stopLossPct ──────────────────────────────────────────────
+  // If losers consistently close well above the stop loss, tighten it.
+  {
+    const current = config.management.stopLossPct ?? -40;
+    const loserPnls = losers.map(p => p.pnl_pct).filter(isFiniteNum);
+    if (loserPnls.length >= 3) {
+      const medianLoserPnl = percentile(loserPnls, 50);
+      // If median loser is much above stop loss (e.g. -12% vs -40%), tighten
+      if (medianLoserPnl > current * 0.5) { // losers are not even close to stop loss
+        const target = medianLoserPnl * 1.3; // set stop a bit below typical loss
+        const newVal = clamp(Number(nudge(current, target, MAX_CHANGE_PER_STEP).toFixed(0)), -50, -5);
+        if (newVal > current) { // tighter = less negative = higher number
+          changes.stopLossPct = newVal;
+          rationale.stopLossPct = `Median loser PnL ${medianLoserPnl.toFixed(1)}% — tightened stop from ${current}% → ${newVal}%`;
+        }
+      }
+    }
+  }
+
+  // ── 5. takeProfitFeePct ────────────────────────────────────────
+  // If winners consistently peak well below take profit, lower TP so we capture gains.
+  {
+    const current = config.management.takeProfitFeePct ?? 15;
+    const winnerPnls = winners.map(p => p.pnl_pct).filter(isFiniteNum);
+    if (winnerPnls.length >= 3) {
+      const p75 = percentile(winnerPnls, 75);
+      // If 75th percentile winner is below TP → most winners never hit TP
+      if (p75 < current * 0.7) {
+        const target = p75 * 1.1;
+        const newVal = clamp(Number(nudge(current, target, MAX_CHANGE_PER_STEP).toFixed(0)), 3, 50);
+        if (newVal < current) {
+          changes.takeProfitFeePct = newVal;
+          rationale.takeProfitFeePct = `75th percentile winner at ${p75.toFixed(1)}% vs TP ${current}% — lowered to ${newVal}%`;
+        }
+      }
+    }
+  }
+
+  // ── 6. minBinStep / maxBinStep ─────────────────────────────────
+  {
+    const winnerBinSteps = winners.map(p => p.bin_step).filter(isFiniteNum);
+    const loserBinSteps = losers.map(p => p.bin_step).filter(isFiniteNum);
+    const currentMin = config.screening.minBinStep ?? 1;
+    const currentMax = config.screening.maxBinStep ?? 200;
+
+    if (loserBinSteps.length >= 2 && winnerBinSteps.length >= 2) {
+      const loserP25 = percentile(loserBinSteps, 25);
+      const winnerMin = Math.min(...winnerBinSteps);
+      const winnerMax = Math.max(...winnerBinSteps);
+      // Tighten min if losers cluster at low bin steps
+      if (loserP25 < winnerMin && winnerMin > currentMin) {
+        const newMin = clamp(Math.round(nudge(currentMin, winnerMin - 5, MAX_CHANGE_PER_STEP)), 1, 200);
+        if (newMin > currentMin) {
+          changes.minBinStep = newMin;
+          rationale.minBinStep = `Losers at bin_step ~${loserP25}, winners start at ${winnerMin} — raised min from ${currentMin} → ${newMin}`;
+        }
+      }
+      // Tighten max if losers cluster at high bin steps
+      const loserP75 = percentile(loserBinSteps, 75);
+      if (loserP75 > winnerMax && winnerMax < currentMax) {
+        const newMax = clamp(Math.round(nudge(currentMax, winnerMax + 5, MAX_CHANGE_PER_STEP)), 50, 500);
+        if (newMax < currentMax) {
+          changes.maxBinStep = newMax;
+          rationale.maxBinStep = `Losers at bin_step ~${loserP75}, winners cap at ${winnerMax} — lowered max from ${currentMax} → ${newMax}`;
+        }
+      }
+    }
+  }
+
+  // ── 7. outOfRangeWaitMinutes ───────────────────────────────────
+  {
+    const current = config.management.outOfRangeWaitMinutes ?? 10;
+    const oorDownLosers = losers.filter(p => p.close_reason?.includes("OOR downside"));
+    const oorUpWinners = winners.filter(p => p.close_reason?.includes("OOR upside"));
+
+    // If downside OOR losers waited too long → shorten wait
+    if (oorDownLosers.length >= 2) {
+      const avgHeld = avg(oorDownLosers.map(p => p.minutes_held).filter(isFiniteNum));
+      if (avgHeld > current * 1.5) {
+        const newVal = clamp(Math.round(nudge(current, current * 0.8, MAX_CHANGE_PER_STEP)), 3, 30);
+        if (newVal < current) {
+          changes.outOfRangeWaitMinutes = newVal;
+          rationale.outOfRangeWaitMinutes = `Downside OOR losers held avg ${avgHeld.toFixed(0)}m — shortened wait from ${current}m → ${newVal}m`;
+        }
+      }
+    }
+    // If upside OOR positions recovered and won → lengthen wait
+    if (oorUpWinners.length >= 2 && oorDownLosers.length === 0) {
+      const newVal = clamp(Math.round(nudge(current, current * 1.2, MAX_CHANGE_PER_STEP)), 3, 30);
+      if (newVal > current) {
+        changes.outOfRangeWaitMinutes = newVal;
+        rationale.outOfRangeWaitMinutes = `Upside OOR positions recovered — extended wait from ${current}m → ${newVal}m`;
+      }
+    }
+  }
+
   if (Object.keys(changes).length === 0) return { changes: {}, rationale: {} };
 
   // ── Persist changes to user-config.json ───────────────────────
@@ -381,9 +486,15 @@ export function evolveThresholds(perfData, config) {
 
   // Apply to live config object immediately
   const s = config.screening;
-  if (changes.maxVolatility    != null) s.maxVolatility    = changes.maxVolatility;
+  const m = config.management;
+  if (changes.maxVolatility        != null) s.maxVolatility        = changes.maxVolatility;
   if (changes.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = changes.minFeeActiveTvlRatio;
-  if (changes.minOrganic       != null) s.minOrganic       = changes.minOrganic;
+  if (changes.minOrganic           != null) s.minOrganic           = changes.minOrganic;
+  if (changes.minBinStep           != null) s.minBinStep           = changes.minBinStep;
+  if (changes.maxBinStep           != null) s.maxBinStep           = changes.maxBinStep;
+  if (changes.stopLossPct          != null) m.stopLossPct          = changes.stopLossPct;
+  if (changes.takeProfitFeePct     != null) m.takeProfitFeePct     = changes.takeProfitFeePct;
+  if (changes.outOfRangeWaitMinutes != null) m.outOfRangeWaitMinutes = changes.outOfRangeWaitMinutes;
 
   // Log a lesson summarizing the evolution
   const data = load();
@@ -454,6 +565,98 @@ function findDuplicate(lessons, candidate) {
   }
 
   return -1;
+}
+
+// ─── Lesson-Based Evolution ────────────────────────────────────
+
+/**
+ * Evolve thresholds based on lesson patterns and tags.
+ * Complements evolveThresholds() which only looks at raw PnL numbers.
+ * This function reads what the agent learned about WHY positions won/lost.
+ */
+export function evolveFromLessons(lessons, config) {
+  if (!lessons || lessons.length < 5) return null;
+
+  const recent = lessons.slice(-30); // last 30 lessons
+  const changes = {};
+  const rationale = {};
+
+  // Count lesson tags
+  const tagCounts = {};
+  for (const l of recent) {
+    for (const tag of (l.tags || [])) {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    }
+  }
+
+  // 1. Downside OOR pattern → tighten stop loss
+  const oorDownCount = tagCounts["downside"] || 0;
+  if (oorDownCount >= 3) {
+    const current = config.management.stopLossPct ?? -40;
+    const newVal = clamp(Math.round(current * 0.85), -50, -5); // tighten by 15%
+    if (newVal > current) {
+      changes.stopLossPct = newVal;
+      rationale.stopLossPct = `${oorDownCount} downside OOR lessons in recent history — tightened stop from ${current}% → ${newVal}%`;
+    }
+  }
+
+  // 2. Volume collapse pattern → raise minVolume
+  const volCollapseCount = tagCounts["volume_collapse"] || 0;
+  if (volCollapseCount >= 3) {
+    const current = config.screening.minVolume ?? 10000;
+    const newVal = clamp(Math.round(current * 1.2), 5000, 100000);
+    if (newVal > current) {
+      changes.minVolume = newVal;
+      rationale.minVolume = `${volCollapseCount} volume collapse lessons — raised minVolume from $${current} → $${newVal}`;
+    }
+  }
+
+  // 3. High failure rate at specific volatility levels (from tags like "volatility_4")
+  const volTags = Object.entries(tagCounts).filter(([t]) => t.startsWith("volatility_"));
+  for (const [tag, count] of volTags) {
+    if (count >= 3) {
+      const vol = parseFloat(tag.replace("volatility_", ""));
+      const current = config.screening.maxVolatility ?? 10;
+      if (vol < current) {
+        const newVal = clamp(Number((vol * 1.1).toFixed(1)), 1.0, 20.0);
+        if (newVal < current && !changes.maxVolatility) {
+          changes.maxVolatility = newVal;
+          rationale.maxVolatility = `${count} failure lessons at volatility ~${vol} — tightened max from ${current} → ${newVal}`;
+        }
+      }
+    }
+  }
+
+  if (Object.keys(changes).length === 0) return { changes: {}, rationale: {} };
+
+  // Persist to user-config.json
+  let userConfig = {};
+  if (fs.existsSync(USER_CONFIG_PATH)) {
+    try { userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")); } catch { /* ignore */ }
+  }
+  Object.assign(userConfig, changes);
+  userConfig._lastEvolved = new Date().toISOString();
+  fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+
+  // Apply to live config
+  const s = config.screening;
+  const m = config.management;
+  if (changes.stopLossPct    != null) m.stopLossPct    = changes.stopLossPct;
+  if (changes.minVolume      != null) s.minVolume      = changes.minVolume;
+  if (changes.maxVolatility  != null) s.maxVolatility  = changes.maxVolatility;
+
+  // Log as lesson
+  const data = load();
+  data.lessons.push({
+    id: Date.now(),
+    rule: `[LESSON-EVOLVED] ${Object.entries(changes).map(([k, v]) => `${k}=${v}`).join(", ")} — ${Object.values(rationale).join("; ")}`,
+    tags: ["evolution", "lesson_based"],
+    outcome: "manual",
+    created_at: new Date().toISOString(),
+  });
+  save(data);
+
+  return { changes, rationale };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────

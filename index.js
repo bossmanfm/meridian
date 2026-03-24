@@ -255,12 +255,17 @@ STEPS:
 4. After any close — recalibrate management interval (MANDATORY):
    - No positions remaining → update_config setting=managementIntervalMin value=10
    - Positions still open → keep current interval
+5. After closing a LOSING position — check MEMORY RECALL for patterns:
+   - If 3+ similar losses (same pool type, volatility range, or strategy) → use update_config to adjust the threshold that would have prevented it
+   - Examples: tighten maxVolatility, raise minOrganic, adjust stopLossPct, raise minVolume
+
+IMPORTANT: pnl_pct ALREADY includes all fees. Negative PnL = losing money AFTER fees. Never say "fees will offset" — they are already counted.
 
 REPORT FORMAT (Strictly follow this for each position — use ${pnlUnit} values):
 **[PAIR]** | Age: [X]m | Fees: [X] ${pnlUnit} | PnL: [X]% | OOR: [direction or "in-range"]
 **Rule triggered:** [rule number or "none"]
 **Decision:** [STAY/CLOSE]
-**Reason:** [1 short sentence]
+**Reason:** [1 short sentence — if PnL is negative, say IL exceeds fees]
 
 FAILURE ANALYSIS: When closing a LOSING position (negative PnL), you MUST call add_lesson with a specific, actionable lesson that explains:
 - What went wrong (entered during pump reversal? too volatile for the range? held too long for a scalper pool?)

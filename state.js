@@ -391,7 +391,9 @@ export async function syncOpenPositions(active_addresses) {
           actual_pnl_pct: closedData.pnl_pct,
           minutes_in_range: Math.max(0, minutesHeld - minutesOOR),
           minutes_held: minutesHeld,
-          close_reason: "external close (detected during sync)",
+          close_reason: pos.oor_direction
+            ? `external close (detected during sync, OOR ${pos.oor_direction})`
+            : "external close (detected during sync)",
         });
 
         pos.notes.push(`LP Agent PnL: ${closedData.pnl_pct}% ($${closedData.pnl_usd})`);
