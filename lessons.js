@@ -403,10 +403,12 @@ export function evolveThresholds(perfData, config) {
       // If 75th percentile winner is below TP → most winners never hit TP
       if (p75 < current * 0.7) {
         const target = p75 * 1.1;
-        const newVal = clamp(Number(nudge(current, target, MAX_CHANGE_PER_STEP).toFixed(0)), 3, 50);
+        // Floor: never drop below trailingTriggerPct + 2, otherwise fixed TP undercuts trailing
+        const tpFloor = (config.management.trailingTriggerPct ?? 4) + 2;
+        const newVal = clamp(Number(nudge(current, target, MAX_CHANGE_PER_STEP).toFixed(0)), tpFloor, 50);
         if (newVal < current) {
           changes.takeProfitFeePct = newVal;
-          rationale.takeProfitFeePct = `75th percentile winner at ${p75.toFixed(1)}% vs TP ${current}% — lowered to ${newVal}%`;
+          rationale.takeProfitFeePct = `75th percentile winner at ${p75.toFixed(1)}% vs TP ${current}% — lowered to ${newVal}% (floor: trailing trigger + 2 = ${tpFloor}%)`;
         }
       }
     }

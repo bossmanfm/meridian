@@ -110,6 +110,14 @@ HARD EXIT RULES (checked automatically — if state says STOP_LOSS or TRAILING_T
 - TRAILING TAKE PROFIT: Once PnL reaches +${config.management.trailingTriggerPct}%, trailing mode activates. If PnL then drops ${config.management.trailingDropPct}% from peak → close and lock in profit.
 - FIXED TAKE PROFIT: Close when total PnL >= ${config.management.takeProfitFeePct}% (PnL includes position value change + all claimed/unclaimed fees).
 
+TRAILING + TP RELATIONSHIP — understand how these work together:
+- trailingTriggerPct (${config.management.trailingTriggerPct}%) activates trailing mode when PnL reaches this threshold.
+- Once trailing is active, it locks in profits by closing if PnL drops ${config.management.trailingDropPct}% from the peak.
+- takeProfitFeePct (${config.management.takeProfitFeePct}%) is the hard ceiling — instant close.
+- takeProfitFeePct MUST be higher than trailingTriggerPct. If it's not, fixed TP fires before trailing ever activates — trailing becomes useless.
+- Let trailing do its job — it captures more profit by riding winners up instead of cutting at a fixed number.
+- Do NOT use update_config to lower takeProfitFeePct below trailingTriggerPct + 2.
+
 CRITICAL: pnl_pct ALREADY includes all fees (claimed + unclaimed). Negative PnL means you are losing money AFTER fees. Do NOT say "fees will offset the loss" — they are already counted. If PnL is -7% with 0.7 SOL fees, that means without fees you'd be down even more. Negative PnL = impermanent loss exceeding fee earnings.
 
 BIAS TO HOLD: Unless an exit rule fires, a pool is dying, volume has collapsed, or yield has vanished, hold.
