@@ -107,26 +107,38 @@ function startCronJobs() {
       } catch { /* best-effort */ }
 
       const { content } = await agentLoop(`
-MANAGEMENT CYCLE${memoryHints}${exitAlerts}
+MANAGEMENT CYCLE — ${positions.length} position(s)
 
-1. get_my_positions — check all open positions.
-2. For each position:
-   - Call get_position_pnl.
-   - Check state summary for any position instruction (e.g. "close at 5% profit").
-   - INSTRUCTION OVERRIDE: If instruction condition IS MET → close immediately, no further analysis.
-   - INSTRUCTION OVERRIDE: If instruction condition NOT YET MET → hold, regardless of other signals.
-   - If no instruction: BIAS = STAY. Only close if yield died, pool collapsed, or extreme loss.
-3. If closing: swap base tokens to SOL.
-4. After any close — recalibrate management interval (MANDATORY):
-   - No positions remaining → update_config management.managementIntervalMin = 10 (reset to default)
-   - Positions still open → keep current interval (already set by deploy volatility)
+PRE-LOADED POSITION DATA (no fetching needed):
+${positionBlocks}${hivePatterns}
 
-REPORT FORMAT (Strictly follow this for each position):
-**[PAIR]** | Age: [X]m | Fees: $[X] | PnL: [X]%
-**Instruction:** [instruction if set, else "none"]
-**Decision:** [STAY/CLOSE]
-**Reason:** [1 short sentence]
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
+HARD CLOSE RULES — apply in order, first match wins:
+1. instruction set AND condition met → CLOSE (highest priority)
+2. instruction set AND condition NOT met → HOLD, skip remaining rules
+3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (stop loss)
+4. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
+5. active_bin > upper_bin + ${config.management.outOfRangeBinsToClose} → CLOSE (pumped far above range)
+6. active_bin > upper_bin AND oor_minutes >= ${config.management.outOfRangeWaitMinutes} → CLOSE (stale above range)
+7. fee_per_tvl_24h < ${config.management.minFeePerTvl24h} AND age_minutes >= 60 → CLOSE (fee yield too low)
+
+When closing: call close_position only — it handles fee claiming internally, do NOT call claim_fees first.
+
+CLAIM RULE: If unclaimed_fee_usd >= ${config.management.minClaimAmount}, call claim_fees. Do not use any other threshold.
+
+INSTRUCTIONS:
+All data is pre-loaded above — do NOT call get_my_positions or get_position_pnl.
+Apply the rules to each position and write your report immediately.
+Only call tools if a position needs to be CLOSED, FLIPPED, or fees need to be CLAIMED.
+If all positions STAY and no fees to claim, just write the report with no tool calls.
+
+REPORT FORMAT (one per position):
+**[PAIR]** | Age: [X]m | Unclaimed: $[X] | PnL: [X]% | [STAY/CLOSE]
+Range: [████████░░░░░░░░░░░░] (20 chars: █ = bins up to active, ░ = bins above active)
+Only add: **Rule [N]:** [reason] — if a close rule triggered. Omit rule line if STAY with no rule.
+
+After all positions, add one summary line:
+💼 [N] positions | $[total_value] | fees today: $[sum_unclaimed] | [any notable action taken]
+      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096);
       mgmtReport = content;
     } catch (error) {
       log("cron_error", `Management cycle failed: ${error.message}`);
