@@ -9,6 +9,7 @@ import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
 import { getMemoryContext } from "./memory.js";
+import { getWeightsSummary } from "./signal-weights.js";
 import { getLpOverviewSummary } from "./tools/lp-overview.js";
 
 // Configurable LLM provider: "openrouter" (default) or "deepseek"
@@ -38,7 +39,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
   const memoryContext = getMemoryContext();
-  let systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, memoryContext);
+  const signalWeights = agentType === "SCREENER" ? (getWeightsSummary() || null) : null;
+  let systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, memoryContext, signalWeights);
 
   // Append verified on-chain LP performance from LP Agent API
   const lpSummary = await getLpOverviewSummary().catch(() => null);

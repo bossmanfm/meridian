@@ -16,6 +16,8 @@ import { getActiveStrategy } from "./strategy-library.js";
 import { initMemory, recallForScreening, recallForManagement, rememberPositionSnapshot, maybePromote, checkCapacity } from "./memory.js";
 import { updatePnlAndCheckExits } from "./state.js";
 import { emit } from "./notifier.js";
+import { stageSignals } from "./signal-tracker.js";
+import { getWeightsSummary } from "./signal-weights.js";
 import { startPnlWatcher, stopPnlWatcher } from "./pnl-watcher.js";
 import { recordPositionSnapshot as recordPoolSnapshot, recallForPool } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -428,6 +430,25 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         if (validBlocks.length > 0) {
           candidateBlocks = `\n\nPRE-LOADED CANDIDATES (recon already done — evaluate and deploy the best one):\n${validBlocks.join("\n\n")}\n`;
         }
+        // Stage signals for each candidate so deploy can snapshot them
+        for (const c of candidates) {
+          try {
+            stageSignals(c.pool, {
+              organic_score: c.organic_score ?? null,
+              fee_tvl_ratio: c.fee_active_tvl_ratio ?? null,
+              volume: c.volume ?? null,
+              volatility: c.volatility ?? null,
+              mcap: c.mcap ?? null,
+              holder_count: c.holders ?? null,
+              smart_wallets_present: blocks.some(b =>
+                b.status === "fulfilled" && b.value?.includes?.(c.name) && b.value?.includes?.("Smart wallets:") && !b.value?.includes?.("Smart wallets: none")
+              ) || false,
+              narrative_quality: null, // filled by LLM evaluation
+              study_win_rate: null,    // filled after study_top_lpers
+              hive_consensus: null,    // filled by hive mind if available
+            });
+          } catch { /* staging is best-effort */ }
+        }
         // Hive mind consensus (if enabled)
         try {
           const hiveMind = await import("./hive-mind.js");
@@ -443,8 +464,17 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         log("cron", `Pre-load failed (${e.message}), agent will fetch manually`);
       }
 
+      // Inject Darwinian signal weights if available
+      let signalWeightsBlock = "";
+      try {
+        const weightsSummary = getWeightsSummary();
+        if (weightsSummary) {
+          signalWeightsBlock = `\n\n${weightsSummary}\n`;
+        }
+      } catch { /* best-effort */ }
+
       const { content } = await agentLoop(`
-SCREENING CYCLE — DEPLOY ONLY${memoryHints}${candidateBlocks}
+SCREENING CYCLE — DEPLOY ONLY${memoryHints}${signalWeightsBlock}${candidateBlocks}
 ${strategyBlock}
 ${candidateBlocks ? `The candidates above are PRE-LOADED with smart wallet, holder, narrative, and memory data.
 Evaluate them directly — no need to call get_top_candidates, check_smart_wallets_on_pool, get_token_holders, or get_token_narrative again.

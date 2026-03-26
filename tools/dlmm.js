@@ -19,6 +19,7 @@ import {
   syncOpenPositions,
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
+import { getAndClearStagedSignals } from "../signal-tracker.js";
 import { normalizeMint, getWalletBalances, swapToken } from "./wallet.js";
 import { calculateBinsForPriceRange, splitRangeBins } from "../runtime-helpers.js";
 
@@ -361,6 +362,7 @@ export async function deployPosition({
     log("deploy", `SUCCESS — ${txHashes.length} tx(s): ${txHashes[0]}`);
 
     _positionsCacheAt = 0;
+    const signal_snapshot = getAndClearStagedSignals(pool_address);
     trackPosition({
       position: newPosition.publicKey.toString(),
       pool: pool_address,
@@ -377,6 +379,7 @@ export async function deployPosition({
       active_bin: activeBin.binId,
       initial_value_usd,
       study_avg_hold_hours,
+      signal_snapshot,
     });
 
     return {
@@ -927,6 +930,7 @@ export async function closePosition({ position_address }) {
         minutes_held: minutesHeld,
         close_reason: closeReason,
         deployed_at: tracked.deployed_at,
+        signal_snapshot: tracked.signal_snapshot || null,
       });
 
       // Clean up transient nugget entries

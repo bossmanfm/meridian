@@ -13,6 +13,7 @@ import { log } from "./logger.js";
 import { config, reloadScreeningThresholds } from "./config.js";
 import { recordPoolDeploy } from "./pool-memory.js";
 import { rememberPoolOutcome, rememberStrategy } from "./memory.js";
+import { recalculateWeights } from "./signal-weights.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -193,6 +194,15 @@ export async function recordPerformance(perf) {
       if ((result?.changes && Object.keys(result.changes).length > 0) ||
           (lessonResult?.changes && Object.keys(lessonResult.changes).length > 0)) {
         reloadScreeningThresholds();
+      }
+
+      // Recalculate Darwinian signal weights alongside threshold evolution
+      if (config.darwin?.enabled) {
+        try {
+          recalculateWeights(data.performance, config);
+        } catch (e) {
+          log("darwin", `Signal weight recalc failed: ${e.message}`);
+        }
       }
     }
   }

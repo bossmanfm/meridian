@@ -61,6 +61,7 @@ export function trackPosition({
   base_mint,
   adopted = false,
   study_avg_hold_hours = null,
+  signal_snapshot = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -82,6 +83,7 @@ export function trackPosition({
     deployed_at: deployed_at || new Date().toISOString(),
     adopted,
     study_avg_hold_hours: study_avg_hold_hours || null,
+    signal_snapshot: signal_snapshot || null,
     out_of_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
@@ -414,6 +416,7 @@ export async function syncOpenPositions(active_addresses) {
           close_reason: pos.oor_direction
             ? `external close (detected during sync, OOR ${pos.oor_direction})`
             : "external close (detected during sync)",
+          signal_snapshot: pos.signal_snapshot || null,
         });
 
         pos.notes.push(`LP Agent PnL: ${closedData.pnl_pct}% ($${closedData.pnl_usd})`);

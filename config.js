@@ -94,6 +94,18 @@ export const config = {
     port: parseInt(u.webPort || process.env.WEB_PORT || "3737", 10),
   },
 
+  // ─── Darwinian Signal Weighting ─────────
+  darwin: {
+    enabled: u.darwinianWeights ?? false,
+    windowDays: u.darwinianWindowDays ?? 60,
+    recalcEvery: u.darwinianRecalcEvery ?? 5,
+    boostFactor: u.darwinianBoostFactor ?? 1.05,
+    decayFactor: u.darwinianDecayFactor ?? 0.95,
+    weightFloor: u.darwinianWeightFloor ?? 0.3,
+    weightCeiling: u.darwinianWeightCeiling ?? 2.5,
+    minSamples: u.darwinianMinSamples ?? 10,
+  },
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",

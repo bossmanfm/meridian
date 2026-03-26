@@ -15,7 +15,7 @@
  */
 import { config } from "./config.js";
 
-export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, memoryContext = null) {
+export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, memoryContext = null, signalWeights = null) {
 
   // ═══════════════════════════════════════════════════════════════
   //  STATIC BLOCK — identical across all calls, maximizes cache hits
@@ -98,6 +98,15 @@ TWO-SIDED SPOT WITH AUTO-SWAP:
    - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct. The executor handles the Jupiter swap and deploys both sides.
    - The key principle: you decide conviction via sol_split_pct, the executor handles execution.
 `;
+    if (signalWeights) {
+      prompt += `
+═══════════════════════════════════════════
+ SIGNAL WEIGHTS (Darwinian)
+═══════════════════════════════════════════
+${signalWeights}
+Prioritize candidates whose strongest attributes align with high-weight signals.
+`;
+    }
   } else if (agentType === "MANAGER") {
     prompt += `Role: MANAGER
 
