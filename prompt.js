@@ -15,6 +15,87 @@
  */
 import { config } from "./config.js";
 
+// ─── Section Override System (used by autoresearch) ──────────
+const _sectionOverrides = {};
+
+export function setPromptSectionOverride(section, text) {
+  _sectionOverrides[section] = text;
+}
+
+export function clearPromptSectionOverride(section) {
+  delete _sectionOverrides[section];
+}
+
+/**
+ * Return the current text for a named prompt section.
+ * If an override is active, returns the override; otherwise the default.
+ */
+export function getPromptSectionText(section) {
+  if (_sectionOverrides[section]) return _sectionOverrides[section];
+  // Return default section text
+  const defaults = _getDefaultSections();
+  return defaults[section] || null;
+}
+
+/**
+ * Range selection text — used by index.js screening cycle.
+ * Autoresearch can override this section.
+ */
+export function getRangeSelectionText(deployAmount, currentBalanceSol) {
+  if (_sectionOverrides.range_selection) return _sectionOverrides.range_selection;
+  return _defaultRangeSelectionText(deployAmount, currentBalanceSol);
+}
+
+function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
+  return `- RANGE: Start with avg_range_pct from study_top_lpers, then adjust using your MEMORY and LESSONS. If you've been burned by OOR at the study range before, go wider. Your own experience overrides historical averages. Default to 35% if no study data.
+- COMPOUNDING: Deploy amount is ${deployAmount} SOL (scaled from wallet: ${currentBalanceSol ?? "?"} SOL). Do NOT override with a smaller amount.
+- After deploy: update_config setting=managementIntervalMin based on volatility (>=5→3, 2-5→5, <2→10).
+- Report: strategy chosen + why, price_range_pct used + source (study data or default), deploy amount, interval set.`;
+}
+
+/** Build default section texts (without config interpolation for manager_logic) */
+function _getDefaultSections() {
+  return {
+    screener_criteria: _defaultScreenerCriteria(),
+    manager_logic: _defaultManagerLogic(),
+    range_selection: _defaultRangeSelectionText("${deployAmount}", "${currentBalanceSol}"),
+  };
+}
+
+function _defaultScreenerCriteria() {
+  return `1. SCREEN: Use get_top_candidates or discover_pools.
+2. STUDY: Call study_top_lpers. Look for high win rates and sustainable volume. Treat avg_range_pct as a starting point — adjust based on your LESSONS and MEMORY (especially OOR direction patterns from past sessions).
+3. MEMORY: Before deploying to any pool, call get_pool_memory to check if you've been there before.
+4. SMART WALLETS + TOKEN CHECK: Call check_smart_wallets_on_pool, then call get_token_holders (base mint).
+   - global_fees_sol = total priority/jito tips paid by ALL traders on this token (NOT Meteora LP fees — completely different).
+   - HARD SKIP if global_fees_sol < minTokenFeesSol (default 30 SOL). Low fees = bundled txs or scam. No exceptions.
+   - Smart wallets present + fees pass → strong signal, proceed to deploy.
+   - No smart wallets → also call get_token_narrative before deciding:
+     * SKIP if top_10_real_holders_pct > 60% OR bundlers > 30% OR narrative is empty/null/pure hype with no specific story
+     * CAUTION if bundlers 15–30% AND top_10 > 40% — check organic + buy/sell pressure
+     * Bundlers 5–15% are normal, not a skip signal on their own
+     * GOOD narrative: specific origin (real event, viral moment, named entity, active community actions)
+     * BAD narrative: generic hype ("next 100x", "community token") with no identifiable subject or story
+     * DEPLOY if global_fees_sol passes, distribution is healthy, and narrative has a real specific catalyst
+5. DEPLOY: get_active_bin then deploy_position.
+   - HARD RULE: Minimum 0.1 SOL absolute floor (prefer 0.5+).
+   - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
+   - Focus on one high-conviction deployment per cycle.
+   - BIN STEP SCALING: Lower bin_step pools need MORE bins for the same % range. bin_step 20 needs 5x more bins than bin_step 100. Always calculate: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Wide ranges (>69 bins) are handled automatically via multi-tx.`;
+}
+
+function _defaultManagerLogic() {
+  return `Decision Factors for Closing (no exit rule triggered):
+- Yield Health: Call get_position_pnl. Is the current Fee/TVL still one of the best available?
+- Price Context: Is the token price stabilizing or trending? If it's out of range, will it come back?
+- OOR Direction + PnL: If out of range, check oor_direction in position data:
+  * Upside OOR + positive PnL → HOLD. SOL idle, no IL, fees earned. Price may return.
+  * Upside OOR + negative PnL → HOLD. Still safe, SOL idle. Negative PnL is from fees/slippage.
+  * Downside OOR + positive PnL → CAUTION. Fees outpaced IL but risk growing. Monitor closely.
+  * Downside OOR + negative PnL → CLOSE. Token dropping, loss growing, cut it.
+- Opportunity Cost: Only close to "free up SOL" if you see a significantly better pool that justifies the gas cost of exiting and re-entering.`;
+}
+
 export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, memoryContext = null, signalWeights = null) {
 
   // ═══════════════════════════════════════════════════════════════
@@ -61,29 +142,12 @@ dynamic_fee: The current total fee rate (base fee + variable fee from on-chain v
   // ═══════════════════════════════════════════════════════════════
 
   if (agentType === "SCREENER") {
+    const screenerCriteria = _sectionOverrides.screener_criteria || _defaultScreenerCriteria();
     prompt += `Role: SCREENER
 
 Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 
-1. SCREEN: Use get_top_candidates or discover_pools.
-2. STUDY: Call study_top_lpers. Look for high win rates and sustainable volume. Treat avg_range_pct as a starting point — adjust based on your LESSONS and MEMORY (especially OOR direction patterns from past sessions).
-3. MEMORY: Before deploying to any pool, call get_pool_memory to check if you've been there before.
-4. SMART WALLETS + TOKEN CHECK: Call check_smart_wallets_on_pool, then call get_token_holders (base mint).
-   - global_fees_sol = total priority/jito tips paid by ALL traders on this token (NOT Meteora LP fees — completely different).
-   - HARD SKIP if global_fees_sol < minTokenFeesSol (default 30 SOL). Low fees = bundled txs or scam. No exceptions.
-   - Smart wallets present + fees pass → strong signal, proceed to deploy.
-   - No smart wallets → also call get_token_narrative before deciding:
-     * SKIP if top_10_real_holders_pct > 60% OR bundlers > 30% OR narrative is empty/null/pure hype with no specific story
-     * CAUTION if bundlers 15–30% AND top_10 > 40% — check organic + buy/sell pressure
-     * Bundlers 5–15% are normal, not a skip signal on their own
-     * GOOD narrative: specific origin (real event, viral moment, named entity, active community actions)
-     * BAD narrative: generic hype ("next 100x", "community token") with no identifiable subject or story
-     * DEPLOY if global_fees_sol passes, distribution is healthy, and narrative has a real specific catalyst
-5. DEPLOY: get_active_bin then deploy_position.
-   - HARD RULE: Minimum 0.1 SOL absolute floor (prefer 0.5+).
-   - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
-   - Focus on one high-conviction deployment per cycle.
-   - BIN STEP SCALING: Lower bin_step pools need MORE bins for the same % range. bin_step 20 needs 5x more bins than bin_step 100. Always calculate: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Wide ranges (>69 bins) are handled automatically via multi-tx.
+${screenerCriteria}
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
@@ -131,15 +195,7 @@ CRITICAL: pnl_pct ALREADY includes all fees (claimed + unclaimed). Negative PnL 
 
 BIAS TO HOLD: Unless an exit rule fires, a pool is dying, volume has collapsed, or yield has vanished, hold.
 
-Decision Factors for Closing (no exit rule triggered):
-- Yield Health: Call get_position_pnl. Is the current Fee/TVL still one of the best available?
-- Price Context: Is the token price stabilizing or trending? If it's out of range, will it come back?
-- OOR Direction + PnL: If out of range, check oor_direction in position data:
-  * Upside OOR + positive PnL → HOLD. SOL idle, no IL, fees earned. Price may return.
-  * Upside OOR + negative PnL → HOLD. Still safe, SOL idle. Negative PnL is from fees/slippage.
-  * Downside OOR + positive PnL → CAUTION. Fees outpaced IL but risk growing. Monitor closely.
-  * Downside OOR + negative PnL → CLOSE. Token dropping, loss growing, cut it.
-- Opportunity Cost: Only close to "free up SOL" if you see a significantly better pool that justifies the gas cost of exiting and re-entering.
+${_sectionOverrides.manager_logic || _defaultManagerLogic()}
 
 IMPORTANT: Do NOT call get_top_candidates or study_top_lpers while you have healthy open positions. Focus exclusively on managing what you have.
 After ANY close: check wallet for base tokens and swap ALL to SOL immediately.

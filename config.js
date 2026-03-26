@@ -98,12 +98,21 @@ export const config = {
   darwin: {
     enabled: u.darwinianWeights ?? false,
     windowDays: u.darwinianWindowDays ?? 60,
-    recalcEvery: u.darwinianRecalcEvery ?? 5,
     boostFactor: u.darwinianBoostFactor ?? 1.05,
     decayFactor: u.darwinianDecayFactor ?? 0.95,
     weightFloor: u.darwinianWeightFloor ?? 0.3,
     weightCeiling: u.darwinianWeightCeiling ?? 2.5,
     minSamples: u.darwinianMinSamples ?? 10,
+  },
+
+  // ─── Autoresearch (ATLAS-inspired prompt optimization) ─────
+  autoresearch: {
+    enabled: u.autoresearch ?? false,
+    minClosesPerTrial: u.autoresearchMinCloses ?? 7,
+    improvementPct: u.autoresearchImprovementPct ?? 15,
+    declinePct: u.autoresearchDeclinePct ?? 15,
+    cooldownCloses: u.autoresearchCooldownCloses ?? 5,
+    llmModel: u.autoresearchModel ?? "openai/gpt-5.4-nano",
   },
 
   // ─── Common Token Mints ────────────────

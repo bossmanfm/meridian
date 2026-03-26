@@ -30,6 +30,7 @@ import {
 } from "./session.js";
 import { startServer } from "./server.js";
 import { getScreeningThresholdSummary, getStartupMode } from "./runtime-helpers.js";
+import { getRangeSelectionText } from "./prompt.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -443,10 +444,10 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
               smart_wallets_present: blocks.some(b =>
                 b.status === "fulfilled" && b.value?.includes?.(c.name) && b.value?.includes?.("Smart wallets:") && !b.value?.includes?.("Smart wallets: none")
               ) || false,
-              narrative_quality: null, // filled by LLM evaluation
-              study_win_rate: null,    // filled after study_top_lpers
+              narrative_quality: null, // filled by tool signal capture in executor
+              study_win_rate: null,    // filled by tool signal capture in executor
               hive_consensus: null,    // filled by hive mind if available
-            });
+            }, c.base_mint || null);
           } catch { /* staging is best-effort */ }
         }
         // Hive mind consensus (if enabled)
@@ -494,10 +495,7 @@ Your own experience overrides historical averages. Default to 35% if no study da
 3. HARD SKIP if global_fees_sol < ${config.screening.minTokenFeesSol} SOL or holders/narrative red flags.
 4. study_top_lpers → use patterns.avg_range_pct as STARTING POINT for price_range_pct. Adjust based on your LESSONS/MEMORY (especially OOR patterns). Default 35% if no data.
 5. deploy_position with ${deployAmount} SOL and price_range_pct from study (adjusted by lessons).`}
-- RANGE: Start with avg_range_pct from study_top_lpers, then adjust using your MEMORY and LESSONS. If you've been burned by OOR at the study range before, go wider. Your own experience overrides historical averages. Default to 35% if no study data.
-- COMPOUNDING: Deploy amount is ${deployAmount} SOL (scaled from wallet: ${currentBalance?.sol ?? "?"} SOL). Do NOT override with a smaller amount.
-- After deploy: update_config setting=managementIntervalMin based on volatility (>=5→3, 2-5→5, <2→10).
-- Report: strategy chosen + why, price_range_pct used + source (study data or default), deploy amount, interval set.
+${getRangeSelectionText(deployAmount, currentBalance?.sol)}
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
       screenReport = content;
     } catch (error) {

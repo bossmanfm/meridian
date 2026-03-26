@@ -19,6 +19,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { config, reloadScreeningThresholds } from "../config.js";
+import { updateStagedSignals, getPoolForMint } from "../signal-tracker.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -271,6 +272,11 @@ export async function executeTool(name, args) {
       } else if (name === "close_position") {
         emit("close", { pair: args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlSol: result.pnl_sol ?? null, pnlPct: result.pnl_pct ?? 0 });
       }
+
+      // ─── Capture screening signals from tool results ────────
+      try {
+        captureToolSignals(name, args, result);
+      } catch { /* signal capture is best-effort */ }
     }
 
     return result;
@@ -397,6 +403,73 @@ async function runSafetyChecks(name, args) {
 
     default:
       return { pass: true };
+  }
+}
+
+/**
+ * Capture screening-relevant signals from tool results and merge into staged signals.
+ * Called after each successful tool execution — only acts on tools that produce signal data.
+ */
+function captureToolSignals(name, args, result) {
+  switch (name) {
+    case "check_smart_wallets_on_pool": {
+      const pool = args.pool_address;
+      if (!pool) break;
+      updateStagedSignals(pool, {
+        smart_wallets_present: !!result.confidence_boost,
+      });
+      break;
+    }
+
+    case "get_token_narrative": {
+      const mint = args.mint;
+      if (!mint) break;
+      const pool = getPoolForMint(mint);
+      if (!pool) break;
+      // Infer narrative quality from whether a narrative string was returned
+      let quality = "skip";
+      if (result.narrative && typeof result.narrative === "string" && result.narrative.trim().length > 0) {
+        quality = "good";
+      } else if (result.status === "none" || result.narrative === null) {
+        quality = "bad";
+      }
+      updateStagedSignals(pool, {
+        narrative_quality: quality,
+      });
+      break;
+    }
+
+    case "study_top_lpers":
+    case "get_top_lpers": {
+      const pool = args.pool_address;
+      if (!pool) break;
+      const winRate = result.patterns?.avg_win_rate;
+      if (winRate != null) {
+        updateStagedSignals(pool, {
+          study_win_rate: winRate,
+        });
+      }
+      break;
+    }
+
+    case "get_token_holders": {
+      const mint = args.mint;
+      if (!mint) break;
+      const pool = getPoolForMint(mint);
+      if (!pool) break;
+      updateStagedSignals(pool, {
+        holder_count: result.total_fetched ?? null,
+        top_10_holders_pct: result.top_10_real_holders_pct != null
+          ? parseFloat(result.top_10_real_holders_pct)
+          : null,
+        bundlers_pct: result.bundlers_pct_in_top_100 != null
+          ? parseFloat(result.bundlers_pct_in_top_100)
+          : null,
+      });
+      break;
+    }
+
+    // No default needed — other tools are silently ignored
   }
 }
 
