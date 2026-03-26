@@ -237,11 +237,7 @@ HARD CLOSE RULES (check in order — close immediately on first match, no furthe
 1. Position instruction condition met → CLOSE immediately (highest priority)
 2. Position instruction exists but condition NOT met → HOLD (skip all other rules)
 3. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
-4. minutes_out_of_range >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout). Check oor_direction + PnL together:
-   - Upside OOR + positive PnL → HOLD. SOL idle, no IL, fees earned. Price may return.
-   - Upside OOR + negative PnL → HOLD. Still safe, SOL idle.
-   - Downside OOR + positive PnL → CAUTION. Fees outpaced IL but risk growing. Monitor.
-   - Downside OOR + negative PnL → CLOSE. Token dropping, loss growing.
+4. minutes_out_of_range >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout). No exceptions — this is a hard rule regardless of OOR direction or PnL. Close and move on.
 5. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio}% AND volume < $${config.screening.minVolume} → CLOSE (yield dead)
 6. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (emergency stop)
 
