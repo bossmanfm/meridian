@@ -10,6 +10,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { config, reloadScreeningThresholds } from "./config.js";
+import { recordPoolDeploy } from "./pool-memory.js";
+import { rememberPoolOutcome, rememberStrategy } from "./memory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -17,6 +20,17 @@ const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
 const LESSONS_FILE = "./lessons.json";
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
+
+/** Read user-config.json once — shared across evolution passes to avoid double reads. */
+function readUserConfig() {
+  if (!fs.existsSync(USER_CONFIG_PATH)) return {};
+  try { return JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")); } catch { return {}; }
+}
+
+/** Write user-config.json — called once after all evolution passes complete. */
+function writeUserConfig(userConfig) {
+  fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+}
 
 function load() {
   if (!fs.existsSync(LESSONS_FILE)) {
@@ -107,7 +121,6 @@ export async function recordPerformance(perf) {
   // Update pool-level memory
   if (perf.pool) {
     try {
-      const { recordPoolDeploy } = await import("./pool-memory.js");
       // Calculate price_range_pct from bin_range if available
       let deployRangePct = null;
       if (perf.bin_range && perf.bin_step) {
@@ -140,7 +153,6 @@ export async function recordPerformance(perf) {
 
   // Store in holographic memory (nuggets)
   try {
-    const { rememberPoolOutcome, rememberStrategy } = await import("./memory.js");
     const outcome = pnl_pct >= 0 ? "profitable" : "unprofitable";
     const oorInfo = perf.close_reason?.match(/OOR (upside|downside)/)?.[1];
     const oorTag = oorInfo ? `, OOR_direction=${oorInfo}` : "";
@@ -160,19 +172,27 @@ export async function recordPerformance(perf) {
 
   // Evolve thresholds every 5 closed positions (compare against stored counter, not modulo)
   {
-    const { config, reloadScreeningThresholds } = await import("./config.js");
-    const lastEvolvedAt = config.screening._positionsAtEvolution || 0;
+    const lastEvolvedAt = readUserConfig()._positionsAtEvolution || 0;
     if (data.performance.length - lastEvolvedAt >= MIN_EVOLVE_POSITIONS) {
-      const result = evolveThresholds(data.performance, config);
+      // Single read of user-config.json shared by both evolution passes
+      let userConfig = readUserConfig();
+
+      const result = evolveThresholds(data.performance, config, { userConfig, lessonsData: data });
       if (result?.changes && Object.keys(result.changes).length > 0) {
-        reloadScreeningThresholds();
+        userConfig = result.userConfig; // carry forward mutations
         log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
       }
-      // Also evolve from lessons/nuggets
-      const lessonResult = evolveFromLessons(data.lessons || [], config);
+      // Also evolve from lessons/nuggets (reuses same userConfig + data)
+      const lessonResult = evolveFromLessons(data.lessons || [], config, { userConfig, lessonsData: data });
       if (lessonResult?.changes && Object.keys(lessonResult.changes).length > 0) {
-        reloadScreeningThresholds();
+        userConfig = lessonResult.userConfig;
         log("evolve", `Lesson-based evolution: ${JSON.stringify(lessonResult.changes)}`);
+      }
+
+      // Single reload covers both passes
+      if ((result?.changes && Object.keys(result.changes).length > 0) ||
+          (lessonResult?.changes && Object.keys(lessonResult.changes).length > 0)) {
+        reloadScreeningThresholds();
       }
     }
   }
@@ -259,9 +279,12 @@ function derivLesson(perf) {
  *
  * @param {Array}  perfData - Array of performance records (from lessons.json)
  * @param {Object} config   - Live config object (mutated in place)
- * @returns {{ changes: Object, rationale: Object } | null}
+ * @param {Object} [opts]   - Optional shared state to avoid redundant file I/O
+ * @param {Object} [opts.userConfig] - Pre-read user-config.json (will be mutated + written)
+ * @param {Object} [opts.lessonsData] - Pre-loaded lessons.json data (avoids extra load/save)
+ * @returns {{ changes: Object, rationale: Object, userConfig: Object } | null}
  */
-export function evolveThresholds(perfData, config) {
+export function evolveThresholds(perfData, config, { userConfig, lessonsData } = {}) {
   if (!perfData || perfData.length < MIN_EVOLVE_POSITIONS) return null;
 
   const winners = perfData.filter((p) => p.pnl_pct > 0);
@@ -475,16 +498,15 @@ export function evolveThresholds(perfData, config) {
   if (Object.keys(changes).length === 0) return { changes: {}, rationale: {} };
 
   // ── Persist changes to user-config.json ───────────────────────
-  let userConfig = {};
-  if (fs.existsSync(USER_CONFIG_PATH)) {
-    try { userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")); } catch { /* ignore */ }
-  }
+  // Use shared userConfig if provided by caller (avoids redundant read/write
+  // when evolveThresholds + evolveFromLessons run back-to-back).
+  if (!userConfig) userConfig = readUserConfig();
 
   Object.assign(userConfig, changes);
   userConfig._lastEvolved = new Date().toISOString();
   userConfig._positionsAtEvolution = perfData.length;
 
-  fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+  writeUserConfig(userConfig);
 
   // Apply to live config object immediately
   const s = config.screening;
@@ -499,17 +521,17 @@ export function evolveThresholds(perfData, config) {
   if (changes.outOfRangeWaitMinutes != null) m.outOfRangeWaitMinutes = changes.outOfRangeWaitMinutes;
 
   // Log a lesson summarizing the evolution
-  const data = load();
-  data.lessons.push({
+  const ld = lessonsData || load();
+  ld.lessons.push({
     id: Date.now(),
     rule: `[AUTO-EVOLVED @ ${perfData.length} positions] ${Object.entries(changes).map(([k, v]) => `${k}=${v}`).join(", ")} — ${Object.values(rationale).join("; ")}`,
     tags: ["evolution", "config_change"],
     outcome: "manual",
     created_at: new Date().toISOString(),
   });
-  save(data);
+  save(ld);
 
-  return { changes, rationale };
+  return { changes, rationale, userConfig };
 }
 
 // ─── Deduplication Helpers ──────────────────────────────────────
@@ -575,8 +597,12 @@ function findDuplicate(lessons, candidate) {
  * Evolve thresholds based on lesson patterns and tags.
  * Complements evolveThresholds() which only looks at raw PnL numbers.
  * This function reads what the agent learned about WHY positions won/lost.
+ *
+ * @param {Object} [opts]   - Optional shared state to avoid redundant file I/O
+ * @param {Object} [opts.userConfig] - Pre-read user-config.json (will be mutated + written)
+ * @param {Object} [opts.lessonsData] - Pre-loaded lessons.json data (avoids extra load/save)
  */
-export function evolveFromLessons(lessons, config) {
+export function evolveFromLessons(lessons, config, { userConfig, lessonsData } = {}) {
   if (!lessons || lessons.length < 5) return null;
 
   const recent = lessons.slice(-30); // last 30 lessons
@@ -631,14 +657,11 @@ export function evolveFromLessons(lessons, config) {
 
   if (Object.keys(changes).length === 0) return { changes: {}, rationale: {} };
 
-  // Persist to user-config.json
-  let userConfig = {};
-  if (fs.existsSync(USER_CONFIG_PATH)) {
-    try { userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")); } catch { /* ignore */ }
-  }
+  // Persist to user-config.json (use shared userConfig if provided)
+  if (!userConfig) userConfig = readUserConfig();
   Object.assign(userConfig, changes);
   userConfig._lastEvolved = new Date().toISOString();
-  fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+  writeUserConfig(userConfig);
 
   // Apply to live config
   const s = config.screening;
@@ -647,18 +670,18 @@ export function evolveFromLessons(lessons, config) {
   if (changes.minVolume      != null) s.minVolume      = changes.minVolume;
   if (changes.maxVolatility  != null) s.maxVolatility  = changes.maxVolatility;
 
-  // Log as lesson
-  const data = load();
-  data.lessons.push({
+  // Log as lesson (use shared lessonsData if provided)
+  const ld = lessonsData || load();
+  ld.lessons.push({
     id: Date.now(),
     rule: `[LESSON-EVOLVED] ${Object.entries(changes).map(([k, v]) => `${k}=${v}`).join(", ")} — ${Object.values(rationale).join("; ")}`,
     tags: ["evolution", "lesson_based"],
     outcome: "manual",
     created_at: new Date().toISOString(),
   });
-  save(data);
+  save(ld);
 
-  return { changes, rationale };
+  return { changes, rationale, userConfig };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────

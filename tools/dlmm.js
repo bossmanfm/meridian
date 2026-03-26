@@ -520,13 +520,26 @@ export async function getMyPositions({ force = false } = {}) {
 
     // Enrich with DLMM PnL API for each unique pool in parallel
     const uniquePools = [...new Set(raw.map((p) => p.pool))];
-    const pnlMaps = await Promise.all(uniquePools.map((pool) => fetchDlmmPnlForPool(pool, walletAddress)));
+    // Check if any positions are untracked (will need LP Agent data for auto-adopt)
+    const hasUntracked = raw.some((r) => !getTrackedPosition(r.position));
+
+    // Fire all independent network calls in parallel:
+    // - PnL API per pool
+    // - SOL price
+    // - LP Agent historical (only if untracked positions exist)
+    const [pnlMaps, walletBalResult, lpAgentMap] = await Promise.all([
+      Promise.all(uniquePools.map((pool) => fetchDlmmPnlForPool(pool, walletAddress))),
+      getWalletBalances().catch(() => ({ sol_price: 0 })),
+      hasUntracked
+        ? import("./lp-overview.js").then((m) => m.fetchHistoricalPositionMap()).catch(() => new Map())
+        : Promise.resolve(new Map()),
+    ]);
+
     const pnlByPool = {};
     uniquePools.forEach((pool, i) => { pnlByPool[pool] = pnlMaps[i]; });
 
     // SOL price for conversion (one fetch, shared across all positions)
-    let solPrice = 0;
-    try { solPrice = (await getWalletBalances()).sol_price || 0; } catch { /* best-effort */ }
+    const solPrice = walletBalResult.sol_price || 0;
     const toSol = (usd) => solPrice > 0 ? Math.round((usd / solPrice) * 10000) / 10000 : null;
 
     const positions = await Promise.all(raw.map(async (r) => {
@@ -559,13 +572,8 @@ export async function getMyPositions({ force = false } = {}) {
           const { getPoolDetail } = await import("./screening.js");
           const poolDetail = await getPoolDetail({ pool_address: r.pool, timeframe: "1h" }).catch(() => null);
 
-          // Try LP Agent API first for accurate strategy + initial value
-          let lpAgentData = null;
-          try {
-            const { fetchClosedPositionData } = await import("../tools/lp-overview.js");
-            // LP Agent works for open positions too via historical endpoint
-            lpAgentData = await fetchClosedPositionData(r.position);
-          } catch { /* LP Agent unavailable, fall back to inference */ }
+          // Use pre-fetched LP Agent data (single API call shared across all positions)
+          const lpAgentData = lpAgentMap.get(r.position) || null;
 
           // Strategy: LP Agent > bin distribution inference > deposit-based guess
           let inferredStrategy = lpAgentData?.strategy || "bid_ask";

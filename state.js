@@ -341,6 +341,8 @@ export async function syncOpenPositions(active_addresses) {
   const activeSet = new Set(active_addresses);
   let changed = false;
 
+  // Collect positions that need closing first to batch the LP Agent fetch
+  const toClose = [];
   for (const posId in state.positions) {
     const pos = state.positions[posId];
     if (pos.closed || activeSet.has(posId)) continue;
@@ -352,18 +354,36 @@ export async function syncOpenPositions(active_addresses) {
       continue;
     }
 
+    toClose.push(posId);
+  }
+
+  if (toClose.length === 0) return;
+
+  // Single LP Agent fetch for all positions that need closing (avoids N+1)
+  let lpAgentMap = new Map();
+  try {
+    const { fetchHistoricalPositionMap } = await import("./tools/lp-overview.js");
+    lpAgentMap = await fetchHistoricalPositionMap();
+  } catch { /* LP Agent unavailable */ }
+
+  // Lazy import of recordPerformance (only needed if we have closed positions)
+  let recordPerformance = null;
+
+  for (const posId of toClose) {
+    const pos = state.positions[posId];
     pos.closed = true;
     pos.closed_at = new Date().toISOString();
     pos.notes.push(`Auto-closed during state sync (not found on-chain)`);
     changed = true;
     log("state", `Position ${posId} auto-closed (missing from on-chain data)`);
 
-    // Fetch final PnL from LP Agent and record performance
+    // Use pre-fetched LP Agent data
     try {
-      const { fetchClosedPositionData } = await import("./tools/lp-overview.js");
-      const closedData = await fetchClosedPositionData(posId);
+      const closedData = lpAgentMap.get(posId) || null;
       if (closedData) {
-        const { recordPerformance } = await import("./lessons.js");
+        if (!recordPerformance) {
+          recordPerformance = (await import("./lessons.js")).recordPerformance;
+        }
         const minutesHeld = pos.deployed_at
           ? Math.floor((Date.now() - new Date(pos.deployed_at).getTime()) / 60000)
           : Math.round((closedData.age_hours || 0) * 60);
