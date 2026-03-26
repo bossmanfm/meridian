@@ -3,7 +3,7 @@ import { Send } from "lucide-react";
 import type { CandidateData, ChatMessage, PositionData, StatusInfo, TimerInfo } from "../hooks/useWebSocket";
 import { SUGGESTIONS } from "@/lib/commands";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+// ScrollArea replaced with native overflow-y-auto div for reliable scrolling
 
 function stripHtml(text: string): string {
   return text
@@ -142,14 +142,14 @@ export default function ChatPanel({
   }, [candidates, positions, status.screeningBusy, timers.screening]);
 
   return (
-    <div className="relative flex h-full flex-col" style={{ minHeight: 0 }}>
+    <div className="relative flex h-full flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(89,131,146,0.14),transparent_68%)]" />
       <div className="pointer-events-none absolute left-8 top-16 hidden font-mono text-[88px] font-semibold uppercase tracking-[-0.06em] text-amber-200/[0.035] xl:block">
         CONTROL
       </div>
 
-      {/* Messages */}
-      <ScrollArea className="flex-1" style={{ minHeight: 0 }}>
+      {/* Messages — calc height: viewport minus statusbar(40px) minus input area(~80px) */}
+      <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 120px)" }}>
         <div className="space-y-4 p-4">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-6 pt-6 text-center xl:items-start xl:justify-start xl:px-12 xl:pt-18 xl:text-left">
@@ -229,7 +229,7 @@ export default function ChatPanel({
 
           <div ref={bottomRef} />
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Input */}
       <div className="border-t border-white/8 bg-[linear-gradient(180deg,rgba(2,24,33,0.64),rgba(0,15,20,0.88))] p-4">
