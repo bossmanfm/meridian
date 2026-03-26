@@ -142,14 +142,14 @@ export default function ChatPanel({
   }, [candidates, positions, status.screeningBusy, timers.screening]);
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="relative flex h-full flex-col" style={{ minHeight: 0 }}>
       <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(89,131,146,0.14),transparent_68%)]" />
       <div className="pointer-events-none absolute left-8 top-16 hidden font-mono text-[88px] font-semibold uppercase tracking-[-0.06em] text-amber-200/[0.035] xl:block">
         CONTROL
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1" style={{ minHeight: 0 }}>
         <div className="space-y-4 p-4">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-6 pt-6 text-center xl:items-start xl:justify-start xl:px-12 xl:pt-18 xl:text-left">
