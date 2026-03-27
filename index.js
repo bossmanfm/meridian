@@ -737,7 +737,8 @@ Commands:
           `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
           config.llm.maxSteps,
           [],
-          "SCREENER"
+          "SCREENER",
+          config.llm.screeningModel
         );
         console.log(`\n${reply}\n`);
         launchCron({ announce: true });
@@ -753,7 +754,8 @@ Commands:
           `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${DEPLOY} SOL. Execute now, don't ask.`,
           config.llm.maxSteps,
           [],
-          "SCREENER"
+          "SCREENER",
+          config.llm.screeningModel
         );
         console.log(`\n${reply}\n`);
         launchCron({ announce: true });
@@ -867,7 +869,8 @@ For each pool, call study_top_lpers then move to the next. After studying all po
 Focus on: hold duration, entry/exit timing, what win rates look like, whether scalpers or holders dominate.`,
           config.llm.maxSteps,
           [],
-          "GENERAL"
+          "GENERAL",
+          config.llm.generalModel
         );
         console.log(`\n${reply}\n`);
       });
@@ -923,7 +926,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. 3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy ${DEPLOY} SOL. 4. Report.
-      `, config.llm.maxSteps, [], "SCREENER");
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
     } catch (e) {
       log("startup_error", e.message);
     }

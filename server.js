@@ -429,7 +429,7 @@ export function startServer(timersFn) {
             const poolList = candidates.map((c, i) => `${i + 1}. ${c.name} (${c.pool})`).join("\n");
             const { content } = await agentLoop(
               `Study top LPers across these ${candidates.length} pools by calling study_top_lpers for each:\n\n${poolList}\n\nFor each pool, call study_top_lpers then move to the next. After studying all pools:\n1. Identify patterns across multiple pools.\n2. Derive 4-8 concrete lessons using add_lesson.\n3. Summarize what you learned.`,
-              config.llm.maxSteps, [], "GENERAL",
+              config.llm.maxSteps, [], "GENERAL", config.llm.generalModel,
             );
             emit("chat:response", { text: content, ts: new Date().toISOString() });
           } finally {
@@ -472,7 +472,7 @@ export function startServer(timersFn) {
             const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
             const { content } = await agentLoop(
               `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${deployAmount} SOL. Execute now, don't ask.`,
-              config.llm.maxSteps, [], "SCREENER",
+              config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel,
             );
             appendHistory("auto", content);
             emit("chat:response", { text: content, ts: new Date().toISOString() });
@@ -502,7 +502,7 @@ export function startServer(timersFn) {
               const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
               const { content } = await agentLoop(
                 `Deploy ${deployAmount} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
-                config.llm.maxSteps, [], "SCREENER",
+                config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel,
               );
               appendHistory(`deploy #${pick} ${pool.name}`, content);
               emit("chat:response", { text: content, ts: new Date().toISOString() });
