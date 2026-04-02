@@ -1,11 +1,12 @@
 import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
+import { execSync } from "child_process";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
-import { getTopCandidates } from "./tools/screening.js";
+import { getTopCandidates, enrichCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
@@ -55,8 +56,8 @@ function buildPrompt() {
 //  CRON DEFINITIONS
 // ═══════════════════════════════════════════
 let _cronTasks = [];
-let _managementBusy = false; // prevents overlapping management cycles
-let _screeningBusy = false;  // prevents overlapping screening cycles
+let _managementBusy = false;
+let _screeningBusy = false;
 
 function stopCronJobs() {
   for (const task of _cronTasks) task.stop();
@@ -71,7 +72,6 @@ function startCronJobs() {
     _managementBusy = true;
     timers.managementLastRun = Date.now();
     log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
-    let mgmtReport = null;
     try {
       // Targeted recall + trailing TP / stop loss pre-check
       let memoryHints = "";
@@ -106,52 +106,49 @@ function startCronJobs() {
         }
       } catch { /* best-effort */ }
 
+      const pos = await getMyPositions();
+      const positionBlocks = (pos.positions || []).map((p) => {
+        const inRange = p.in_range ? "✅" : "❌";
+        const pnl = p.pnl_pct != null ? `${p.pnl_pct >= 0 ? "+" : ""}${p.pnl_pct.toFixed(2)}%` : "n/a";
+        const unclaimed = p.unclaimed_fee_usd ? `$${p.unclaimed_fee_usd.toFixed(2)}` : "$0";
+        const age = p.age_minutes != null ? `${p.age_minutes}m` : "n/a";
+        const range = p.in_range ? `${p.lower_bin}→${p.upper_bin}` : `OOR: ${p.lower_bin}→${p.upper_bin}`;
+        return `[${p.pair || p.pool}] ${inRange} | Age: ${age} | Unclaimed: ${unclaimed} | PnL: ${pnl} | Range: ${range} | Fee/TVL: ${p.fee_per_tvl_24h?.toFixed(2) || "n/a"}%`;
+      }).join("\n") || "No open positions";
+
       const { content } = await agentLoop(`
-MANAGEMENT CYCLE — ${positions.length} position(s)
+⚙️ MANAGEMENT — ${pos.positions?.length || 0} pos
 
-PRE-LOADED POSITION DATA (no fetching needed):
-${positionBlocks}${hivePatterns}
+DATA:
+${positionBlocks}${memoryHints}${exitAlerts}
 
-HARD CLOSE RULES — apply in order, first match wins:
-1. instruction set AND condition met → CLOSE (highest priority)
-2. instruction set AND condition NOT met → HOLD, skip remaining rules
-3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (stop loss)
-4. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
-5. active_bin > upper_bin + ${config.management.outOfRangeBinsToClose} → CLOSE (pumped far above range)
-6. active_bin > upper_bin AND oor_minutes >= ${config.management.outOfRangeWaitMinutes} → CLOSE (stale above range)
-7. fee_per_tvl_24h < ${config.management.minFeePerTvl24h} AND age_minutes >= 60 → CLOSE (fee yield too low)
+CLOSE RULES (first match wins):
+1. instruction met → CLOSE | 2. instruction NOT met → HOLD
+3. PnL <= ${config.management.emergencyPriceDropPct}% → CLOSE | 4. PnL >= ${config.management.takeProfitFeePct}% → CLOSE
+5. active_bin > upper+${config.management.outOfRangeBinsToClose} → CLOSE | 6. OOR >= ${config.management.outOfRangeWaitMinutes}min → CLOSE
+7. fee/TVL < ${config.management.minFeePerTvl24h} AND age>=60min → CLOSE
 
-When closing: call close_position only — it handles fee claiming internally, do NOT call claim_fees first.
+LESSON: Don't close too early! 20 positions closed at 0% with peak +50%+ missed.
+Trailing TP: trigger at ${config.management.trailingTakeProfit ? config.management.trailingTriggerPct : 5}%, drop ${config.management.trailingTakeProfit ? config.management.trailingDropPct : 3}% — let position breathe!
 
-CLAIM RULE: If unclaimed_fee_usd >= ${config.management.minClaimAmount}, call claim_fees. Do not use any other threshold.
+Close: call close_position only (includes claim). Claim separately if unclaimed >= ${config.management.minClaimAmount}.
 
-INSTRUCTIONS:
-All data is pre-loaded above — do NOT call get_my_positions or get_position_pnl.
-Apply the rules to each position and write your report immediately.
-Only call tools if a position needs to be CLOSED, FLIPPED, or fees need to be CLAIMED.
-If all positions STAY and no fees to claim, just write the report with no tool calls.
+INSTRUCTIONS: Data pre-loaded — no fetching. Apply rules, report immediately. Only tool call if CLOSE/CLAIM needed.
 
-REPORT FORMAT (one per position):
-**[PAIR]** | Age: [X]m | Unclaimed: $[X] | PnL: [X]% | [STAY/CLOSE]
-Range: [████████░░░░░░░░░░░░] (20 chars: █ = bins up to active, ░ = bins above active)
-Only add: **Rule [N]:** [reason] — if a close rule triggered. Omit rule line if STAY with no rule.
-
-After all positions, add one summary line:
-💼 [N] positions | $[total_value] | fees today: $[sum_unclaimed] | [any notable action taken]
+REPORT FORMAT (one line per position):
+**[PAIR]** — PnL [X]% — [STAY/CLOSE]
+End with: 💼 [N] pos | $[value]
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096);
-      mgmtReport = content;
+      if (telegramEnabled() && content) sendMessage(content).catch(() => {});
     } catch (error) {
       log("cron_error", `Management cycle failed: ${error.message}`);
-      mgmtReport = `Management cycle failed: ${error.message}`;
+      if (telegramEnabled()) sendMessage(`Management failed: ${error.message}`).catch(() => {});
     } finally {
       _managementBusy = false;
-      if (telegramEnabled()) {
-        if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
-        const pos = await getMyPositions().catch(() => null);
-        for (const p of pos?.positions || []) {
-          if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
-            notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => {});
-          }
+      const pos = await getMyPositions().catch(() => null);
+      for (const p of pos?.positions || []) {
+        if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
+          notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => {});
         }
       }
     }
@@ -179,8 +176,25 @@ After all positions, add one summary line:
     _screeningBusy = true;
     timers.screeningLastRun = Date.now();
     log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
-    let screenReport = null;
     try {
+      // Fetch candidates with OKX enrichment
+      const rawCandidates = await getTopCandidates({ limit: 5 });
+      const candidates = rawCandidates.candidates || [];
+      const enrichedCandidates = await enrichCandidates(candidates);
+      
+      // Build candidate context
+      const candidateContext = enrichedCandidates.length > 0
+        ? `\n\nTOP CANDIDATES (with OKX enrichment):\n${enrichedCandidates.map((c, i) => 
+            `${i+1}. **${c.pool_name}**\n   fee/TVL: ${(c.fee_active_tvl_ratio*100).toFixed(1)}% | vol: ${c.volatility?.toFixed(1)} | organic: ${c.organic_score}\n   bots: ${c.bundlers_pct?.toFixed(1)}% | top10: ${c.top_10_real_holders_pct?.toFixed(1)}%\n   OKX risk: ${c.okx_risk_score}/100 | smart: ${c.okx_smart_wallet_count} | wash: ${c.okx_wash_trade_detected ? "⚠️" : "✅"}`
+          ).join("\n\n")}`
+        : "\n\nNo eligible candidates found this cycle.";
+      
+      // Get current state
+      const prePositions = await getMyPositions();
+      const currentBalance = await getWalletBalances();
+      const deployAmount = config.risk.deployAmountSol;
+      
+      const strategyBlock = ""; // strategy guidance block (from strategy library)
       // Targeted recall: recall strategy memories for common bin steps
       let memoryHints = "";
       try {
@@ -204,39 +218,42 @@ After all positions, add one summary line:
       } catch { /* memory recall is best-effort */ }
 
       const { content } = await agentLoop(`
-SCREENING CYCLE
-${strategyBlock}
+🔍 SCREENING
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
-${candidateContext}
-DECISION RULES:
-- HARD SKIP if fees < ${config.screening.minTokenFeesSol} SOL (bundled/scam)
-- HARD SKIP if top10 > ${config.screening.maxTop10Pct}% OR bots > ${config.screening.maxBundlersPct}%
-${config.screening.blockedLaunchpads.length ? `- HARD SKIP if launchpad is any of: ${config.screening.blockedLaunchpads.join(", ")}` : ""}
-- SKIP if narrative is empty/null or pure hype with no specific story (unless smart wallets present)
-- Bots 5–25% are normal, not a skip reason on their own
-- Smart wallets present → strong confidence boost
+${candidateContext}${memoryHints}
 
-STEPS:
-1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
-2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
-3. Report in this exact format (no tables, no extra sections):
-   Deployed: PAIR
-   bin_step=X | fee=X% | bots=X% | top10=X% | fees=XSOL
-   range=minPrice→maxPrice (downside=minPrice/maxPrice*100%)
-   smart_wallets=name1,name2 (or none)
-   narrative: <one sentence>
-   reason: <one sentence why picked over others>
+HARD RULES (skip if any match):
+• fees < ${config.screening.minTokenFeesSol} SOL (scam/bundled)
+• bots > ${config.screening.maxBundlersPct}% OR top10 > ${config.screening.maxTop10Pct}%
+• blocked launchpad/token
+• volatility < 4 (LESSON: low vol pools lose money — Chicky-SOL vol=3.14 FAILED)
+• pool has bad history (win rate <30% AND avg PnL <-5% over 3+ deployments) — check pool memory
+• OKX risk score > 50 (high rug probability)
+• OKX wash trade detected (fake volume)
+• OKX honeypot detected
+
+PREFER (from lessons + OKX):
+• volatility ≥5 (high vol = better performance)
+• fee/TVL >3%, volume >$10k/h
+• smart wallets present (OKX smart_wallet_count ≥3)
+• pool with good history (win rate ≥60%, avg PnL ≥3%)
+• OKX risk score < 30 (low risk)
+• OKX real volume ≥80% (quality volume)
+
+DEPLOY: Call deploy_position (bin pre-fetched). bins_below = 35-90 based on vol.
+
+Report EXACT format:
+✅ DEPLOY: PAIR — [X] SOL
+fee=X% | bots=X% | vol=X.XX | OKX risk: XX/100
+smart: [count] wallets | wash: ✅/⚠️
+why: <one sentence>
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
-      screenReport = content;
+      if (telegramEnabled() && content) sendMessage(content).catch(() => {});
     } catch (error) {
       log("cron_error", `Screening cycle failed: ${error.message}`);
-      screenReport = `Screening cycle failed: ${error.message}`;
+      if (telegramEnabled()) sendMessage(`Screening failed: ${error.message}`).catch(() => {});
     } finally {
       _screeningBusy = false;
-      if (telegramEnabled()) {
-        if (screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
-      }
     }
   });
 
@@ -286,7 +303,17 @@ async function shutdown(signal) {
 }
 
 process.on("SIGINT",  () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGTERM", (sig) => {
+  let trace = "unavailable";
+  try {
+    const ppid = process.ppid;
+    const psInfo = execSync(`ps -p ${ppid} -o pid,ppid,comm 2>/dev/null`).toString().trim();
+    const children = execSync(`pgrep -P ${process.pid} 2>/dev/null`).toString().trim();
+    trace = `parent=${psInfo}, children=${children || "none"}, stack=${new Error().stack}`;
+  } catch(e) { trace = `trace error: ${e.message}`; }
+  log("shutdown", `SIGTERM received. Trace: ${trace}`);
+  shutdown("SIGTERM");
+});
 
 // ═══════════════════════════════════════════
 //  FORMAT CANDIDATES TABLE
@@ -633,6 +660,91 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           console.log("\nSaved to user-config.json. Applied immediately.\n");
         }
       });
+      return;
+    }
+
+    // ── /lesson — Check auto-lesson performance ─────────────────
+    if (input === "/lesson") {
+      try {
+        const { getLessonPerformance } = await import("./auto-lesson.js");
+        const perf = getLessonPerformance();
+        console.log("\n📚 AUTO-LESSON PERFORMANCE");
+        console.log("=" .repeat(50));
+        if (perf.message) {
+          console.log(perf.message);
+        } else {
+          console.log(`Total Closed: ${perf.totalClosed}`);
+          console.log(`Win Rate: ${perf.overallWinRate}`);
+          console.log(`Avg Missed Profit: ${perf.avgMissedProfit}%`);
+          console.log("\nBy Volatility:");
+          console.log(`  Low (<4): ${perf.byVolatility.low.count} positions, avg PnL ${perf.byVolatility.low.avgPnl}%`);
+          console.log(`  Med (4-6): ${perf.byVolatility.medium.count} positions, avg PnL ${perf.byVolatility.medium.avgPnl}%`);
+          console.log(`  High (≥6): ${perf.byVolatility.high.count} positions, avg PnL ${perf.byVolatility.high.avgPnl}%`);
+          console.log("\nCurrent Config (auto-adjusted):");
+          console.log(`  Trailing TP: ${perf.currentConfig.trailingTP}`);
+          console.log(`  Min Volatility: ${perf.currentConfig.minVolatility}`);
+          console.log(`  Min Fee/TVL: ${perf.currentConfig.minFeeTvl}`);
+          console.log(`  Max Positions: ${perf.currentConfig.maxPositions}`);
+          console.log(`  Deploy Amount: ${perf.currentConfig.deployAmount}`);
+        }
+        console.log("=" .repeat(50));
+      } catch (e) {
+        console.log(`\nError: ${e.message}\n`);
+      }
+      return;
+    }
+
+    // ── /pool — Check pool memory ─────────────────
+    if (input.startsWith("/pool")) {
+      try {
+        const { getAllPoolMemory, getPoolLesson } = await import("./pool-memory.js");
+        const memory = getAllPoolMemory();
+        const pools = Object.keys(memory);
+        
+        console.log("\n🏊 POOL MEMORY");
+        console.log("=" .repeat(50));
+        
+        if (pools.length === 0) {
+          console.log("No pool history yet");
+        } else if (input === "/pool") {
+          console.log(`Total pools tracked: ${pools.length}\n`);
+          for (const addr of pools.slice(0, 10)) {
+            const pool = memory[addr];
+            const winRate = pool.stats.totalDeployments > 0 
+              ? (pool.stats.winCount / pool.stats.totalDeployments * 100).toFixed(0) 
+              : 0;
+            const avgPnl = pool.stats.totalDeployments > 0
+              ? (pool.stats.totalPnlPct / pool.stats.totalDeployments).toFixed(1)
+              : 0;
+            console.log(`  ${pool.pool_name}: ${pool.stats.totalDeployments}x, ${winRate}% win, ${avgPnl}% avg`);
+          }
+          if (pools.length > 10) {
+            console.log(`  ... and ${pools.length - 10} more`);
+          }
+        } else {
+          // /pool <name> — get specific pool details
+          const searchName = input.replace("/pool", "").trim().toLowerCase();
+          const found = Object.entries(memory).find(([_, p]) => p.pool_name.toLowerCase().includes(searchName));
+          if (found) {
+            const [addr, pool] = found;
+            const lesson = getPoolLesson(addr);
+            console.log(`\n📍 ${pool.pool_name}`);
+            console.log(`   Deployments: ${pool.stats.totalDeployments}`);
+            console.log(`   Win Rate: ${(pool.stats.winCount/pool.stats.totalDeployments*100).toFixed(0)}%`);
+            console.log(`   Avg PnL: ${(pool.stats.totalPnlPct/pool.stats.totalDeployments).toFixed(1)}%`);
+            console.log(`   Avg Range Eff: ${pool.stats.avgRangeEfficiency.toFixed(0)}%`);
+            console.log(`   Avg Hold: ${pool.stats.avgMinutesHeld.toFixed(0)} min`);
+            if (lesson) {
+              console.log(`\n   Lesson: [${lesson.outcome}] ${lesson.lesson}`);
+            }
+          } else {
+            console.log(`Pool "${searchName}" not found`);
+          }
+        }
+        console.log("=" .repeat(50));
+      } catch (e) {
+        console.log(`\nError: ${e.message}\n`);
+      }
       return;
     }
 

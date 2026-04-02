@@ -20,6 +20,7 @@ import {
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
 import { normalizeMint } from "./wallet.js";
+import { notifyDeploy, notifyClose } from "../telegram.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -206,6 +207,14 @@ export async function deployPosition({
       active_bin: activeBin.binId,
       initial_value_usd,
     });
+
+    // Send Telegram notification (fire-and-forget)
+    notifyDeploy({
+      pair: pool_name || pool_address.slice(0, 12) + "...",
+      amountSol: finalAmountY,
+      position: newPosition.publicKey.toString(),
+      tx: txHash,
+    }).catch(() => {});
 
     return {
       success: true,
@@ -518,30 +527,33 @@ export async function closePosition({ position_address }) {
   }
 
   try {
-    log("close", `Closing position: ${position_address}`);
+    // ─── Setup: Get pool and position data ───────────
     const wallet = getWallet();
     const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
-    // Clear cached pool so SDK loads fresh position fee state
     poolCache.delete(poolAddress.toString());
     const pool = await getPool(poolAddress);
-
     const positionPubKey = new PublicKey(position_address);
     const positionData = await pool.getPosition(positionPubKey);
-
-    const txHashes = [];
-
-    // ─── Step 1: Claim Fees (to clear account state) ───────────
+    const allTxHashes = [];  // Track all transactions
+    
+    // ─── Step 1: Claim Fees BEFORE close (critical!) ───────────
     try {
       log("close", `Step 1: Claiming fees for ${position_address}`);
+      
       const claimTxs = await pool.claimSwapFee({
         owner: wallet.publicKey,
         position: positionData,
       });
       for (const tx of Array.isArray(claimTxs) ? claimTxs : [claimTxs]) {
         const claimHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet], { skipPreflight: true });
-        txHashes.push(claimHash);
+        allTxHashes.push(claimHash);
       }
-      log("close", `Step 1 OK: ${txHashes.join(", ")}`);
+      if (allTxHashes.length > 0) {
+        recordClaim(position_address, allTxHashes[0]);
+        log("close", `Step 1 OK: ${allTxHashes[0]}`);
+      } else {
+        log("close_warn", `Step 1 (Claim) skipped — nothing to claim`);
+      }
     } catch (e) {
       log("close_warn", `Step 1 (Claim) failed or nothing to claim: ${e.message}`);
     }
@@ -559,16 +571,59 @@ export async function closePosition({ position_address }) {
 
     for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
       const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet], { skipPreflight: true });
-      txHashes.push(txHash);
+      allTxHashes.push(txHash);
     }
-    log("close", `SUCCESS txs: ${txHashes.join(", ")}`);
+    log("close", `SUCCESS txs: ${allTxHashes.join(", ")}`);
     // Wait for RPC to reflect withdrawn balances before returning — prevents
     // agent from seeing zero balance when attempting post-close swap
     await new Promise(r => setTimeout(r, 5000));
     recordClose(position_address, "agent decision");
 
-    // Record performance for learning
+    // Send Telegram notification (fire-and-forget)
     const tracked = getTrackedPosition(position_address);
+    if (tracked) {
+      notifyClose({
+        pair: tracked.pool_name || position_address.slice(0, 12) + "...",
+        pnlUsd: tracked.pnl_usd || 0,
+        pnlPct: tracked.pnl_pct || 0,
+      }).catch(() => {});
+    }
+
+    // AUTO-LESSON: Record performance and auto-adjust all config
+    if (tracked) {
+      try {
+        const { recordPerformance } = await import('../auto-lesson.js');
+        const adjustments = recordPerformance(tracked);
+        
+        // POOL MEMORY: Track per-pool performance
+        const { recordPoolDeploy } = await import('../pool-memory.js');
+        const poolStats = recordPoolDeploy(tracked.pool, {
+          pool_name: tracked.pool_name,
+          base_mint: tracked.base_mint,
+          deployed_at: tracked.deployed_at,
+          closed_at: new Date().toISOString(),
+          pnl_pct: tracked.pnl_pct,
+          pnl_usd: tracked.pnl_usd,
+          range_efficiency: tracked.range_efficiency,
+          minutes_held: tracked.minutes_held,
+          close_reason: tracked.close_reason,
+          strategy: tracked.strategy,
+          volatility: tracked.volatility,
+        });
+        
+        // Log significant adjustments
+        for (const [key, adj] of Object.entries(adjustments)) {
+          if (adj.adjusted) {
+            log("auto_lesson", `${key.toUpperCase()} adjusted: ${JSON.stringify(adj)}`);
+          }
+        }
+        log("pool_memory", `${tracked.pool_name}: ${poolStats.totalDeployments} deployments, ${(poolStats.winCount/poolStats.totalDeployments*100).toFixed(0)}% win rate`);
+      } catch (e) {
+        log("warn", `Auto-lesson failed: ${e.message}`);
+      }
+    }
+
+    // Record performance for learning
     if (tracked) {
       const deployedAt = new Date(tracked.deployed_at).getTime();
       const minutesHeld = Math.floor((Date.now() - deployedAt) / 60000);

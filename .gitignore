@@ -1,23 +1,21 @@
-# Dependencies
-node_modules/
-
-# Environment & secrets
+# Sensitive - NEVER commit
 .env
-.env.*
-
-# User config (contains RPC URL, wallet key, API keys)
 user-config.json
-
-# Runtime state (position tracking, lessons — user-specific)
 state.json
 lessons.json
-smart-wallets.json
+pool-memory.json
+*.log
+.log_position
+SETUP_LOG.md
+meridian.log
 
-# Logs
-logs/
+# Config backups
+*.backup
+ecosystem.config.cjs
 
-# OS
-.DS_Store
+# Data folders
+data/
+discord-signals.json
 
-# Dev context
-context.md
+# Node modules
+node_modules/

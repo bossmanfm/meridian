@@ -1,4 +1,23 @@
 import { config } from "../config.js";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Load blocked tokens list
+let _blockedTokens = null;
+function getBlockedTokens() {
+  if (_blockedTokens === null) {
+    try {
+      const data = JSON.parse(readFileSync(join(__dirname, "..", "blocked-tokens.json"), "utf8"));
+      _blockedTokens = new Set(data.blocked || []);
+    } catch {
+      _blockedTokens = new Set();
+    }
+  }
+  return _blockedTokens;
+}
 
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 
@@ -69,8 +88,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
 
+  // Exclude blocked/rugged tokens
+  const blockedTokens = getBlockedTokens();
+
   const eligible = pools
-    .filter((p) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint))
+    .filter((p) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint) && !blockedTokens.has(p.base?.mint))
     .slice(0, limit);
 
   return {
@@ -170,4 +192,29 @@ function round(n) {
 
 function fix(n, decimals) {
   return n != null ? Number(n.toFixed(decimals)) : null;
+}
+
+// ─── OKX Enrichment ────────────────────────────────────────────
+// Add smart money and risk data to candidates
+
+export async function enrichCandidates(candidates) {
+  try {
+    const { enrichWithOKX } = await import("./okx.js");
+    
+    log("screening", `Enriching ${candidates.length} candidates with OKX data...`);
+    
+    // Enrich in parallel (OKX is free, no rate limit concerns)
+    const enriched = await Promise.all(
+      candidates.map(c => enrichWithOKX(c).catch(e => {
+        log("okx_warn", `Enrich failed for ${c.pool_name}: ${e.message}`);
+        return c; // Return original if OKX fails
+      }))
+    );
+    
+    log("screening", `OKX enrichment complete`);
+    return enriched;
+  } catch (e) {
+    log("screening_warn", `OKX enrichment failed: ${e.message}`);
+    return candidates; // Return original if import fails
+  }
 }
